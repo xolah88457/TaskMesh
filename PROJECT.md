@@ -1,5 +1,5 @@
 # TaskMesh — Project State
-> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-20.
+> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-20 (Dashboard UX + Agent Layout session).
 > Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`.
 
 ---
@@ -195,6 +195,13 @@ curl -X POST http://localhost:8000/api/auth/register \
 | `socket_app` not `app` as uvicorn entry point | `python-socketio` wraps FastAPI in an ASGI middleware. Using `app` bypasses the Socket.IO layer, causing 403 on all WebSocket connections. |
 | No free tier | Every payment is 50% API cost. Free tier bleeds money. All users must be on a paid plan to start runs. |
 | Starter: 3 agents, standard models only | Cheaper API cost. Flagship models (deepseek-v4-pro, kimi-k2, etc.) are Pro-only. Starter falls back to `deepseek-v4-flash`. |
+| Balance shown as percentage, not dollars | Usage amounts should never show dollar values. Only payment-related items (plan prices, pack costs) use dollars. Percentages are clearer for credit depletion tracking. |
+| BillingPage centered layout | Previous left-aligned layout left half the screen as dead space. Centered layout with `maxWidth: 780` uses screen real estate better. |
+| Admin bypass redirects to dashboard | After entering valid admin key, user should be taken directly to the main app, not left on the billing page. `navigate('/')` after `fetchUsage()` ensures BillingGate sees the updated plan. |
+| Default agent layout is manager-only | Fresh installs start empty — only the Manager coordinator. Avoids overwhelming new users. Workers added via Settings "+ Add" or "Recommended layout". |
+| Settings API key section relabeled to OpenCode | Provider is OpenCode Go (not NVIDIA NIM). Settings label, placeholder, and helper text updated. |
+| "Recommended layout" button one-click agent setup | Applies a tested 9-agent configuration with specific model assignments. Replaces current agents with confirmation. |
+| "+ Add agents" button in sidebar | Quick access from the main dashboard to agent configuration, reducing friction for new users with an empty agent list. |
 
 ---
 
@@ -235,11 +242,16 @@ The current milestone is "working SaaS product, end-to-end":
 
 ## Where I Left Off (Agent Recovery)
 
-**Session ended:** 2026-05-20  
-**Last action:** Created `PROJECT.md` and `TODO.md`
+**Session ended:** 2026-05-20 (Dashboard UX + Agent Layout)  
+**Last action:** Implemented 4 dashboard UX fixes — empty default agent layout, OpenCode API key relabeling, "+ Add agents" sidebar button, "Recommended layout" settings button. Updated TODO.md, PROJECT.md, AGENT_CONTEXT.md. TypeScript build passed (0 errors).
 
 **State of the codebase:**
 - All code for billing redesign, account page, onboarding gate, and dev bypass is complete
+- BillingPage UI polished: centered layout, percentage-only balance, admin bypass redirect
+- Dashboard agent layout now starts empty (manager only); users explicitly add agents
+- Settings panel: API key section now labeled for OpenCode Go/Zen, Save & Apply button no longer ghosts
+- Sidebar: "+ Add agents" button opens Settings for agent configuration
+- Settings: "Recommended layout" button applies a one-click 9-agent configuration
 - TypeScript build passes clean (0 errors)
 - Python syntax clean
 - Google OAuth works end-to-end
@@ -248,19 +260,14 @@ The current milestone is "working SaaS product, end-to-end":
 
 **Files changed most recently (this session):**
 ```
-backend/agents/base_agent.py       run() → dict with token counts
-backend/db/models.py               added UserCredits table
-backend/api/billing.py             full rewrite — Starter/Pro/PAYG, model gating
-backend/core/orchestrator.py       _deduct_credits(), agent cap, model substitution
-backend/api/routes.py              billing gate, Pro guards on config + github
-backend/api/github.py              Pro plan gate
-backend/api/account.py             NEW — profile/email/password/delete endpoints
-backend/main.py                    registered account router
-frontend/src/pages/BillingPage.tsx full rewrite — credit bar, plan cards, PAYG
-frontend/src/pages/AccountPage.tsx NEW — full account settings page
-frontend/src/components/Header.tsx user pill → /account link
-frontend/src/App.tsx               BillingGate + /account route
-AGENT_CONTEXT.md                   full rewrite to reflect all changes
+backend/core/config_loader.py      DEFAULT_AGENTS reduced to manager-only
+frontend/src/components/SettingsPanel.tsx   API key relabel, Save&Apply fix, Recommended layout button
+frontend/src/components/AgentsList.tsx      "+ Add agents" button
+frontend/src/components/Sidebar.tsx         onAddAgents prop passthrough
+frontend/src/App.tsx                        onAddAgents callback to Sidebar
+TODO.md                                    added Dashboard UX section + decisions
+PROJECT.md                                 added decisions, updated recovery section
+AGENT_CONTEXT.md                           updated Sections 1, 12, 14, 22, 24
 ```
 
 **Next 3 concrete tasks:**
@@ -277,10 +284,11 @@ AGENT_CONTEXT.md                   full rewrite to reflect all changes
 
 **Constraints:**
 - Do NOT enable auth in production without setting a strong `SECRET_KEY`
-- Do NOT commit `.env` — it contains NVIDIA_API_KEY and SECRET_KEY
-- `agent-team.config.json` currently contains the NVIDIA key — do not commit it
+- Do NOT commit `.env` — it contains API keys and SECRET_KEY
+- `agent-team.config.json` may contain API keys — do not commit it
 - Starter users must NEVER get access to models in `PRO_ONLY_MODELS`
 - Credit deduction in `_deduct_credits()` must always be fire-and-forget — do not await it inline
+- Balance display must NEVER show dollar amounts for usage — only percentages
 
 **Prompts that reliably get an agent back on track:**
 > "Read PROJECT.md, AGENT_CONTEXT.md Section 24, and TODO.md. Pick up the next task."

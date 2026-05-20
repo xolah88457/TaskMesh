@@ -7,12 +7,25 @@ function statusInfo(s: Agent['status']): { label: string; dot: string } {
   return              { label: 'Working', dot: '#22c55e' }
 }
 
-export default function AgentsList({ agents, count }: { agents: Agent[]; count: number }) {
+export default function AgentsList({ agents, count, onAddAgents }: { agents: Agent[]; count: number; onAddAgents?: () => void }) {
   return (
     <div>
       <div className="flex justify-between items-center mb-2">
         <span className="text-[10px] tracking-widest font-mono uppercase" style={{ color: 'var(--c-text-3)' }}>Agents</span>
-        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--c-surface-3)', color: 'var(--c-text-2)' }}>{count}</span>
+        <div className="flex items-center gap-1.5">
+          {onAddAgents && (
+            <button
+              onClick={onAddAgents}
+              className="text-[9px] font-mono px-1.5 py-0.5 rounded transition-colors"
+              style={{ border: '1px solid var(--c-accent-border)', color: 'var(--c-accent)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              + Add agents
+            </button>
+          )}
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--c-surface-3)', color: 'var(--c-text-2)' }}>{count}</span>
+        </div>
       </div>
       <div className="space-y-1.5">
         {agents.map(agent => (

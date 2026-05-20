@@ -12,18 +12,20 @@ interface Props {
   terminalLines: string[]
   reviewerActive?: boolean
   reviewerResult?: ReviewerResult | null
+  onAddAgents?: () => void
 }
 
 export default function Sidebar({
   agents, tasks, changedFiles, changedFileNames, terminalLines,
   reviewerActive = false, reviewerResult = null,
+  onAddAgents,
 }: Props) {
   return (
     <div
       className="flex flex-col gap-3 p-3 overflow-y-auto w-full h-full backdrop-blur-sm"
       style={{ borderLeft: '1px solid var(--c-border)', background: 'var(--c-surface-2)' }}
     >
-      <AgentsList agents={agents} count={agents.length} />
+      <AgentsList agents={agents} count={agents.length} onAddAgents={onAddAgents} />
 
       {tasks.length > 0 && (
         <div className="pt-3" style={{ borderTop: '1px solid var(--c-border)' }}>

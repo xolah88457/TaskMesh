@@ -157,6 +157,7 @@ function MainApp() {
             terminalLines={state.terminalLines}
             reviewerActive={state.reviewerActive}
             reviewerResult={state.reviewerResult}
+            onAddAgents={() => { setSettingsTab('project'); setSettingsOpen(true) }}
           />
         </div>
       </div>

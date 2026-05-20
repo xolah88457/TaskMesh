@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-20. Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-20 (Dashboard UX + Agent Layout session). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -8,6 +8,45 @@
 ---
 
 ## ✅ Completed
+
+### Dashboard UX & Agent Layout (2026-05-20)
+- ✅ **Default agent layout is empty (manager only) on fresh install / first login**
+  - Backend `DEFAULT_AGENTS` in `config_loader.py` reduced to manager-only
+  - Frontend `DEFAULT_CONFIG` in `SettingsPanel.tsx` reduced to manager-only
+  - Users see an empty dashboard and must explicitly add agents via Settings or "+ Add agents" button
+  - The manager agent is always present as the required pipeline coordinator
+- ✅ **API key settings relabeled for OpenCode Go / Zen**
+  - Settings panel provider section now labeled "OpenCode API Key" (was "NVIDIA NIM")
+  - Placeholder text: "Paste your OpenCode Go or Zen API key…"
+  - Helper text references opencode.ai/zen
+  - Provider name default changed from "NVIDIA NIM" → "OpenCode Go" in DEFAULT_PROVIDER and frontend config
+- ✅ **Save & Apply button overlap fixed**
+  - Button now uses distinct visual states: normal (accent border), saving (muted+wait cursor), saved (green)
+  - No more ghosting/overlap when transitioning between states
+  - Disabled when saving or saved
+- ✅ **"+ Add agents" button in sidebar AGENTS heading**
+  - Located next to the "AGENTS" text in the sidebar (right panel)
+  - Clicking opens the Settings panel to the Project tab where agents can be configured
+  - Styled with accent border matching existing UI
+  - Prop chain: App.tsx → Sidebar → AgentsList
+- ✅ **"Recommended layout" button in dashboard Settings**
+  - Button in the Agents section of Settings panel
+  - Clicking shows a confirmation prompt: "Apply the recommended 9-agent layout? This will replace all current agents."
+  - On confirm, replaces all agents with the recommended set:
+    | Agent | Model |
+    |---|---|
+    | Manager | deepseek-v4-pro |
+    | WebDev | kimi-k2.6 |
+    | Researcher | kimi-k2.5 |
+    | Backend | deepseek-v4-flash |
+    | Frontend | mimo-v2.5 |
+    | Tester | qwen3.5-plus |
+    | Docs | qwen3.5-plus |
+    | Logger | qwen3.5-plus |
+    | Reviewer | deepseek-v4-pro |
+  - Warns if no API key is configured (agents will fail to run)
+  - Confirmation has "Apply and replace" and "Cancel" buttons
+  - Replaces (not merges) existing agent config
 
 ### Infrastructure
 - ✅ Provider switched NVIDIA NIM → OpenCode Go (2026-05-20)
@@ -81,6 +120,14 @@
 - ✅ Download individual files
 - ✅ GitHub push button (Pro only, calls /api/github/push)
 
+### Billing UI Polish (2026-05-20)
+- ✅ BillingPage centered layout — content horizontally centered with balanced whitespace
+- ✅ Balance display changed to percentage only — no dollar amounts shown for usage/credits anywhere
+- ✅ Plan prices ($30/mo, $80/mo, Add $10, etc.) remain in dollars (payment-related, not usage)
+- ✅ Admin bypass redirect fixed — entering valid key now redirects to dashboard after granting access
+- ✅ BalanceBar component: large `{pct}%` display with colored fill bar (green → amber < 25% → red < 10%)
+- ✅ TypeScript build passes clean (0 errors)
+
 ---
 
 ## ⬜ Not Started — Your Action Required
@@ -95,10 +142,7 @@ These items require manual steps outside the codebase.
   - Until done: all agent runs fail with authentication error
 
 ### 📦 Dependencies
-- ⬜ **Add PyJWT and bcrypt to `backend/requirements.txt`**
-  - Add: `PyJWT>=2.8.0` and `bcrypt>=4.0.0`
-  - Currently must be `pip install`ed manually after `pip install -r requirements.txt`
-  - This will break fresh installs until fixed
+- ✅ PyJWT and bcrypt added to `backend/requirements.txt` (2026-05-20)
 
 ### 💳 Paddle Setup
 - ⬜ Create Paddle account at paddle.com
@@ -214,7 +258,6 @@ These are improvements to build next when external services are wired up.
 | Paddle checkout | PADDLE_PRICE_* not set in .env |
 | Paddle webhook | No public URL (local dev only) |
 | Auto-commit after run | PROJECT_DIR git repo not initialized |
-| Fresh `pip install` success | PyJWT + bcrypt missing from requirements.txt |
 
 ---
 
@@ -229,3 +272,9 @@ These are improvements to build next when external services are wired up.
 | 2026-05-20 | Logout removed from Header | Caused accidental logouts. Logout lives only on AccountPage Danger Zone section. |
 | 2026-05-20 | NVIDIA NIM over OpenRouter | Faster cold start, better rate limits for current usage. OpenRouter code preserved (commented) as a fallback option. |
 | 2026-05-20 | Custom auth over Clerk | Clerk added complexity and external dependency. Custom JWT is simpler, faster, and works offline. |
+| 2026-05-20 | Balance shown as percentage, not dollars | Usage amounts should never show dollar values. Only payment-related items (plan prices, pack costs) use dollars. Percentages are clearer for credit depletion tracking. |
+| 2026-05-20 | BillingPage centered layout | Previous left-aligned layout left half the screen as dead space. Centered layout with `maxWidth: 780` uses screen real estate better. |
+| 2026-05-20 | Admin bypass redirects to dashboard | After entering valid admin key, user should be taken directly to the main app, not left on the billing page. `navigate('/')` after `fetchUsage()` ensures BillingGate sees the updated plan. |
+| 2026-05-20 | Default agent layout is manager-only | Fresh installs start with only the Manager coordinator. Users explicitly add workers via Settings or "+ Add agents" button. Avoids overwhelming new users with 9 agents before they understand the system. |
+| 2026-05-20 | "Recommended layout" button in Settings | One-click setup of all 9 agents with tested OpenCode Go model assignments. Replaces all current agents. Includes confirmation dialog and API key warning. |
+| 2026-05-20 | "+ Add agents" direct shortcut in sidebar | Quick access from the main dashboard to the agent configuration pane, reducing friction for new users who see an empty agent list. |

@@ -542,21 +542,27 @@ function defaultAgent(presetId: string, model: string, overrides: Partial<AgentC
   }
 }
 
+// Default config — manager only. Users add executors via +Add or Recommended Layout.
 const DEFAULT_CONFIG: Config = {
   sprint: 'Sprint #1',
-  provider: { name: 'NVIDIA NIM', baseURL: 'https://integrate.api.nvidia.com/v1', apiKey: '' },
+  provider: { name: 'OpenCode Go', baseURL: 'https://opencode.ai/zen/go/v1', apiKey: '' },
   agents: [
-    defaultAgent('manager',    'deepseek-ai/deepseek-v4-pro'),
-    defaultAgent('webdev',     'moonshotai/kimi-k2.6'),
-    defaultAgent('researcher', 'mistralai/mistral-large-3-675b-instruct-2512'),
-    defaultAgent('backend',    'deepseek-ai/deepseek-v4-flash',            { temperature: 0.5, top_p: 0.85 }),
-    defaultAgent('frontend',   'google/gemma-4-31b-it'),
-    defaultAgent('tester',     'mistralai/ministral-14b-instruct-2512',    { temperature: 0.5 }),
-    defaultAgent('docs',       'mistralai/mistral-7b-instruct-v0.3',       { temperature: 0.4 }),
-    defaultAgent('logger',     'meta/llama-3.1-8b-instruct',               { temperature: 0.3 }),
-    defaultAgent('reviewer',   'qwen/qwen3-coder-480b-a35b-instruct'),
+    defaultAgent('manager', 'deepseek-v4-pro'),
   ],
 }
+
+// Recommended agent-to-model mapping — applied by the "Recommended layout" button.
+const RECOMMENDED_LAYOUT: { roleId: string; model: string; temperature?: number; top_p?: number }[] = [
+  { roleId: 'manager',    model: 'deepseek-v4-pro' },
+  { roleId: 'webdev',     model: 'kimi-k2.6' },
+  { roleId: 'researcher', model: 'kimi-k2.5' },
+  { roleId: 'backend',    model: 'deepseek-v4-flash',   temperature: 0.5, top_p: 0.85 },
+  { roleId: 'frontend',   model: 'mimo-v2.5' },
+  { roleId: 'tester',     model: 'qwen3.5-plus',        temperature: 0.5 },
+  { roleId: 'docs',       model: 'qwen3.5-plus',        temperature: 0.4 },
+  { roleId: 'logger',     model: 'qwen3.5-plus',        temperature: 0.3 },
+  { roleId: 'reviewer',   model: 'deepseek-v4-pro' },
+]
 
 function Slider({ label, value, min, max, step, onChange }: {
   label: string; value: number; min: number; max: number; step: number
@@ -630,6 +636,8 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showKey, setShowKey] = useState(false)
+  const [showRecConfirm, setShowRecConfirm] = useState(false)
+  const [recMsg, setRecMsg] = useState('')
   const [activeTab, setActiveTab] = useState<'project' | 'account'>(initialTab)
   const authFetch = useAuthFetch()
   const { user, logout } = useAuthContext()
@@ -641,7 +649,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
       .then(r => r.json())
       .then(data => setCfg({
         sprint:   data.sprint   ?? 'Sprint #1',
-        provider: { name: 'NVIDIA NIM', baseURL: 'https://integrate.api.nvidia.com/v1', ...data.provider },
+        provider: { name: 'OpenCode Go', baseURL: 'https://opencode.ai/zen/go/v1', ...data.provider },
         agents:   (data.agents ?? []).map((a: AgentCfg) => {
           const preset = AGENT_PRESETS.find(p => p.id === a.id)
           return {
@@ -686,6 +694,20 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
 
   const removeAgent = (idx: number) =>
     setCfg(c => ({ ...c, agents: c.agents.filter((_, i) => i !== idx) }))
+
+  const applyRecommendedLayout = () => {
+    setRecMsg('')
+    // Warn if no API key configured
+    if (!cfg.provider.apiKey.trim()) {
+      setRecMsg('Warning: No API key is set. Agents will fail to run until a valid OpenCode Go or Zen key is provided.')
+    }
+    const newAgents = RECOMMENDED_LAYOUT.map(r => defaultAgent(r.roleId as AgentPreset['id'], r.model, {
+      ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
+      ...(r.top_p !== undefined ? { top_p: r.top_p } : {}),
+    }))
+    setCfg(c => ({ ...c, agents: newAgents }))
+    setShowRecConfirm(false)
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -811,8 +833,8 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
               </Field>
             </Section>
 
-            {/* Provider */}
-            <Section title="NVIDIA NIM">
+            {/* Provider API Key */}
+            <Section title="OpenCode API Key">
               <div className="space-y-1.5">
                 <div className="flex gap-1">
                   <input
@@ -821,7 +843,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
                     type={showKey ? 'text' : 'password'}
                     value={cfg.provider.apiKey}
                     onChange={e => updateProvider('apiKey', e.target.value)}
-                    placeholder="nvapi-..."
+                    placeholder="Paste your OpenCode Go or Zen API key…"
                   />
                   <button
                     onClick={() => setShowKey(s => !s)}
@@ -830,19 +852,57 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
                   >{showKey ? 'hide' : 'show'}</button>
                 </div>
                 <p className="text-[9px] font-mono pl-0.5" style={{ color: 'var(--c-text-4)' }}>
-                  One key unlocks all NIM models — get yours at nvidia.com/nim
+                  Supports OpenCode Go ($10/mo) and Zen plans — get yours at opencode.ai/zen
                 </p>
               </div>
             </Section>
 
             {/* Agents */}
             <Section title="Agents" action={
-              <button onClick={addAgent}
-                className="text-[10px] font-mono px-2 py-0.5 rounded"
-                style={{ color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
-                + Add
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowRecConfirm(true)}
+                  className="text-[10px] font-mono px-2 py-0.5 rounded"
+                  style={{ color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}
+                >
+                  Recommended layout
+                </button>
+                <button onClick={addAgent}
+                  className="text-[10px] font-mono px-2 py-0.5 rounded"
+                  style={{ color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
+                  + Add
+                </button>
+              </div>
             }>
+              {/* Recommended layout confirmation */}
+              {showRecConfirm && (
+                <div className="mb-2 p-3 rounded border text-[10px] font-mono space-y-2"
+                  style={{ borderColor: 'var(--c-accent-border)', background: 'var(--c-accent-dim)' }}
+                >
+                  <p style={{ color: 'var(--c-text-2)' }}>
+                    Apply the recommended 9-agent layout? This will <strong style={{ color: '#f59e0b' }}>replace</strong> all current agents.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={applyRecommendedLayout}
+                      className="px-3 py-1 rounded font-bold"
+                      style={{ background: 'var(--c-accent)', color: '#000' }}
+                    >
+                      Apply and replace
+                    </button>
+                    <button
+                      onClick={() => setShowRecConfirm(false)}
+                      className="px-3 py-1 rounded"
+                      style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-3)' }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {recMsg && (
+                <p className="mb-2 text-[10px] font-mono" style={{ color: '#f59e0b' }}>{recMsg}</p>
+              )}
               {cfg.agents.map((agent, idx) => (
                 <AgentEditor
                   key={idx}
@@ -878,9 +938,15 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
             {activeTab === 'project' && (
               <button
                 onClick={handleSave}
-                disabled={saving}
-                className="text-xs font-mono px-4 py-1.5 rounded disabled:opacity-50 transition-all"
-                style={{ border: '1px solid var(--c-accent-border)', color: 'var(--c-accent)' }}
+                disabled={saving || saved}
+                className="text-xs font-mono px-4 py-1.5 rounded transition-all"
+                style={
+                  saved
+                    ? { border: '1px solid #22c55e', color: '#22c55e', background: 'rgba(34,197,94,0.1)' }
+                    : saving
+                    ? { border: '1px solid var(--c-border)', color: 'var(--c-text-4)', cursor: 'wait' }
+                    : { border: '1px solid var(--c-accent-border)', color: 'var(--c-accent)' }
+                }
               >
                 {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save & Apply'}
               </button>

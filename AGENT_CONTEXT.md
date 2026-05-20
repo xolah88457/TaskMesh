@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-20
+Last updated: 2026-05-20 (Dashboard UX + Agent Layout session)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -35,7 +35,9 @@ Pay-as-you-go credit packs (no subscription required, but a subscription is need
   Pack L  — $100 one-time → $50 credits
 
 Credits deplete based on actual LLM token usage after each agent call (not a fixed per-run
-fee). The balance display shows a live dollar amount that shrinks as agents consume tokens.
+fee). The balance display shows a percentage of remaining credits that shrinks as agents
+consume tokens. No dollar amounts are shown for usage anywhere in the application — only
+plan prices and pack costs use dollar values.
 50% of every payment goes to OpenRouter API credits for the user; 50% is profit.
 
 Users with no subscription and $0 balance cannot start runs.
@@ -1142,18 +1144,26 @@ SPECIAL ID RULES:
                        gets the structured research prompt in Phase 1
 
 DEFAULT AGENTS (from config_loader.py):
-  manager    — Coordinator   — deepseek-ai/deepseek-v4-pro                 — not planner  [PRO MODEL]
-  webdev     — Architect     — moonshotai/kimi-k2.6                        — planner=true [PRO MODEL]
-  researcher — Tech Lead     — mistralai/mistral-large-3-675b-instruct-2512 — planner=true [PRO MODEL]
-  backend    — API           — deepseek-ai/deepseek-v4-flash               — not planner
-  frontend   — UI/UX         — google/gemma-4-31b-it                       — not planner
-  tester     — QA            — mistralai/ministral-14b-instruct-2512       — not planner
-  docs       — Writer        — mistralai/mistral-7b-instruct-v0.3          — not planner
-  logger     — Chronicler    — meta/llama-3.1-8b-instruct                  — not planner
-  reviewer   — Code Review   — qwen/qwen3-coder-480b-a35b-instruct         — Phase 4 only [PRO MODEL]
+  manager    — Coordinator   — deepseek-v4-pro                        — not planner
+  (No other agents by default — users must add executors via Settings)
 
-  [PRO MODEL] = included in PRO_ONLY_MODELS; Starter users get deepseek-ai/deepseek-v4-flash instead.
-  See Section 15 for the full model tier gating list.
+  The default agent layout contains only the Manager coordinator.
+  Fresh installs and first-login users see an empty dashboard with no worker agents.
+  Users add agents via:
+    - Settings panel → "+ Add" button
+    - Settings panel → "Recommended layout" button (one-click 9-agent setup)
+    - Sidebar → "+ Add agents" button (opens Settings)
+
+  RECOMMENDED LAYOUT (applied by "Recommended layout" button in Settings):
+  manager    — Coordinator   — deepseek-v4-pro                 — not planner
+  webdev     — Architect     — kimi-k2.6                       — planner=true
+  researcher — Tech Lead     — kimi-k2.5                       — planner=true
+  backend    — API           — deepseek-v4-flash (temp 0.5)    — not planner
+  frontend   — UI/UX         — mimo-v2.5                       — not planner
+  tester     — QA            — qwen3.5-plus (temp 0.5)         — not planner
+  docs       — Writer        — qwen3.5-plus (temp 0.4)         — not planner
+  logger     — Chronicler    — qwen3.5-plus (temp 0.3)         — not planner
+  reviewer   — Code Review   — deepseek-v4-pro                 — Phase 4 only
 
 TASK TAG MAPPING:
   manager -> "MGR"
@@ -1280,15 +1290,22 @@ THEMES (frontend/src/themes.ts):
 BILLING PAGE (BillingPage.tsx):
   Fetches GET /api/billing/usage on mount.
   Polls every 30 seconds while a run is active (state.running) for live balance updates.
+  Layout: centered horizontally with maxWidth 780px, balanced whitespace on both sides.
   Structure:
     No-plan yellow banner (if plan="none")
-    Credit balance bar with fill (like Claude's usage bar):
-      Shows "$X.XX remaining" and a colored fill bar (green → amber < $2 → red < $0.50)
-    Plan cards (Starter / Pro side-by-side):
-      Shows features list, price, CTA button if not current plan, "CURRENT" badge if current
+    Credit balance card (if on a plan):
+      Shows large percentage (e.g. "87%") with colored fill bar
+      Green → amber (< 25%) → red (< 10%)
+      Low/warning messages shown when credits are running low
+      NO dollar amounts — usage is percentage-only
+    Plan cards (Starter / Pro side-by-side, responsive grid):
+      Shows features list, price in dollars, CTA button if not current plan, "CURRENT" badge if current
     Pay-as-you-go packs section:
-      3 buttons: Add $10 ($20), Add $25 ($50), Add $50 ($100)
+      3 buttons: Add $10 ($20), Add $25 ($50), Add $50 ($100) — prices in dollars (payment-related)
       Disabled if plan="none" (requires subscription to top up)
+    Admin bypass (hidden trigger at bottom):
+      Invisible "·" button opens key input
+      On valid key: grants pro plan with 999999 cents, redirects to dashboard (/)
 
 ACCOUNT PAGE (AccountPage.tsx):
   Route: /account (protected). Accessed via user pill in Header.
@@ -1301,13 +1318,32 @@ ACCOUNT PAGE (AccountPage.tsx):
     Danger zone: type "DELETE" to confirm account deletion (calls DELETE /api/account)
   On successful name/email change: calls login(new_token) to refresh JWT and update header pill.
 
+SIDEBAR (Sidebar.tsx):
+  Right panel container: agents + tasks + files + terminal.
+  The AGENTS heading has a "+ Add agents" button that opens the Settings panel.
+  All sections have borders separating them. Reviewer panel appears when active or results exist.
+
 SETTINGS PANEL (SettingsPanel.tsx):
   Opens as a slide-in overlay from the right.
   Loads current config via GET /api/config.
-  Allows editing: agent models (grouped optgroup dropdowns), temperatures, thinking budgets,
-    system prompts, themes.
-  All inputs use inputStyle() which returns {background: --c-input-bg, border: --c-border, color: --c-text-1}.
-  Saves via PUT /api/config (Pro only — backend returns 403 for Starter).
+  Two tabs: "Project Settings" and "Account".
+  Project Settings tab:
+    - Theme picker (5 themes in a grid)
+    - Sprint label input
+    - OpenCode API Key section (labeled "OpenCode API Key", supports Go and Zen plans)
+    - Agents section:
+      - "+ Add" button — adds next available preset agent or a generic one
+      - "Recommended layout" button — one-click 9-agent configuration:
+        Shows confirmation prompt ("Apply and replace"). On confirm, replaces all agents with:
+        manager/deepseek-v4-pro, webdev/kimi-k2.6, researcher/kimi-k2.5,
+        backend/deepseek-v4-flash, frontend/mimo-v2.5, tester/qwen3.5-plus,
+        docs/qwen3.5-plus, logger/qwen3.5-plus, reviewer/deepseek-v4-pro
+        Warns if no API key is configured.
+      - Each agent row: expandable to show role preset selector, custom ID, system prompt,
+        model dropdown (Flagship/Balanced/Fast/Code groups), temperature/top_p/top_k sliders,
+        "Recommended" sampler values button, thinking budget slider, color picker, remove button
+  Account tab: identity display, change email/password (TODO stubs), billing info, OAuth links, danger zone
+  Footer: Close button, Save & Apply button (with distinct normal/saving/saved visual states)
 
 PROJECTS DASHBOARD (ProjectsDashboard.tsx):
   Three-column layout: run list | file list | file content viewer
@@ -1366,6 +1402,13 @@ CREDIT DEPLETION:
   Called after every agent call (selector, planners, manager, executors, reviewer).
   Fire-and-forget via asyncio.create_task — never blocks a run.
   balance_cents is floored at 0 (never goes negative).
+
+  DISPLAY RULE: Balance is shown as a percentage on the frontend (BillingPage BalanceBar
+  component). The percentage is calculated as (balance_cents / allocatedCents) * 100.
+  NO dollar amounts are displayed for usage/credits anywhere in the application.
+  Only payment-related items (plan prices like "$30/mo", pack costs like "Add $10") use
+  dollar values. This policy ensures users think in terms of credit consumption rate, not
+  absolute dollar values.
 
 MODEL PRICING TABLE (billing.py — cents per 1000 tokens, prompt / completion):
   deepseek-ai/deepseek-v4-pro                   (0.014, 0.028)   [PRO ONLY]
@@ -1627,6 +1670,12 @@ FIXED ISSUES (listed for historical awareness):
      Header now shows a user pill that links to /account. logout() only in AccountPage.
  13. BillingPage showed old Free/Pro/Team plans. Replaced with Starter/Pro + PAYG packs.
  14. base_agent.run() discarded response.usage. Fixed: now returns token counts in dict.
+ 15. BillingPage left-aligned with dead space on right. Fixed: centered layout with
+     `flex justify-center items-start` and `maxWidth: 780`.
+ 16. Balance displayed as dollar amount (e.g. "$9999.99 remaining"). Fixed: now shows
+     percentage only (e.g. "87%"). No dollar amounts for usage anywhere in the app.
+ 17. Admin bypass did not redirect after granting access. Fixed: `navigate('/')` called
+     after `fetchUsage()` so BillingGate sees updated plan and allows passage.
 
 OPEN ISSUES:
   1. GitHub access_token in user_github stored in plaintext. Encrypt before production.
@@ -1732,8 +1781,10 @@ Read these files in this order when exploring the codebase:
 20. frontend/src/pages/ProjectsDashboard.tsx
     Run history UI. File browser. GitHub push integration (Pro only).
 
-21. frontend/src/components/SettingsPanel.tsx
-    Most frequently edited file. Agent configuration UI. All inputs use inputStyle().
+ 21. frontend/src/components/SettingsPanel.tsx
+     Most frequently edited file. Agent configuration UI. All inputs use inputStyle().
+     Contains RECOMMENDED_LAYOUT constant with the 9-agent recommended mapping.
+     "+ Add" button adds preset agents. "Recommended layout" button replaces all agents.
 
 22. tests/test_improvements.py
     25 unit tests. Good examples of how coordination classes work.
@@ -1796,7 +1847,7 @@ Check GitHub connection:
 SECTION 24: CURRENT STATUS — WHAT IS DONE AND WHAT REMAINS
 ================================================================================
 
-Last updated: 2026-05-20
+Last updated: 2026-05-20 (Dashboard UX + Agent Layout session)
 This section tracks the real-world setup state for this specific deployment.
 Read this section first in a new session to know exactly where to pick up.
 
@@ -1807,7 +1858,6 @@ DONE — Core infrastructure
 [x] Backend runs cleanly
     Command: python3 -m uvicorn backend.main:socket_app --reload --port 8000
     Virtualenv at MiniMaxClone/venv. Activate with: source venv/bin/activate
-    PyJWT and bcrypt installed manually (not yet in requirements.txt — see open issues)
 
 [x] Frontend runs cleanly
     Command: cd frontend && npm run dev
@@ -1823,6 +1873,8 @@ DONE — Core infrastructure
 [x] SECRET_KEY set to a valid 64-hex-char value in .env
 
 [x] AUTH_DISABLED removed from .env (real auth enabled in production)
+
+[x] PyJWT and bcrypt added to requirements.txt
 
 [x] Billing system redesigned (completed 2026-05-20)
     - New user_credits table (plan + balance_cents, persists across months)
@@ -1857,6 +1909,52 @@ DONE — Core infrastructure
 [x] SettingsPanel fixes
     - Sprint input and API key input now use inputStyle() (opaque backgrounds)
     - Settings dropdown removed — replaced with a direct Settings button
+
+[x] BillingPage UI polish (completed 2026-05-20)
+    - Centered layout: content horizontally centered with balanced whitespace
+    - Balance display: percentage only (e.g. "87%"), no dollar amounts for usage
+    - BalanceBar: large percentage number with colored fill bar
+    - Admin bypass redirect: entering valid key now redirects to dashboard (/)
+    - TypeScript build passes clean (0 errors)
+
+--------------------------------------------------------------------------------
+DONE — Dashboard UX & Agent Layout (2026-05-20)
+--------------------------------------------------------------------------------
+
+[x] Empty default agent layout on fresh install / first login
+    - Backend DEFAULT_AGENTS in config_loader.py reduced to manager-only
+    - Frontend DEFAULT_CONFIG in SettingsPanel.tsx reduced to manager-only
+    - Users see an empty dashboard (only the Manager pipeline coordinator)
+    - Users must explicitly add agents via Settings or "+ Add agents" button
+
+[x] OpenCode API key relabel in Settings
+    - Section title changed from "NVIDIA NIM" to "OpenCode API Key"
+    - Placeholder: "Paste your OpenCode Go or Zen API key…"
+    - Helper text references opencode.ai/zen
+    - Provider name defaults updated in both backend and frontend configs
+
+[x] Save & Apply button overlap fixed
+    - Three distinct visual states: normal (accent), saving (muted + wait cursor), saved (green)
+    - No ghosting or overlapping between state transitions
+    - Button is properly disabled during saving/saved
+
+[x] "+ Add agents" button in sidebar AGENTS heading
+    - Located next to the "AGENTS" text in the right panel
+    - Clicking opens the Settings panel to the Project tab
+    - Styled with accent border matching existing UI
+    - Prop chain: App.tsx → Sidebar → AgentsList
+
+[x] "Recommended layout" button in Settings Panel
+    - One-click 9-agent configuration button
+    - Confirmation dialog: "Apply and replace" vs "Cancel"
+    - Replaces all current agents with the recommended set:
+      Manager → deepseek-v4-pro, WebDev → kimi-k2.6, Researcher → kimi-k2.5,
+      Backend → deepseek-v4-flash, Frontend → mimo-v2.5, Tester → qwen3.5-plus,
+      Docs → qwen3.5-plus, Logger → qwen3.5-plus, Reviewer → deepseek-v4-pro
+    - Warns if no API key is configured
+    - Saves via the regular Save & Apply flow
+
+[x] TypeScript build passes clean (0 errors)
 
 --------------------------------------------------------------------------------
 TODO — External services not yet configured
@@ -1908,7 +2006,10 @@ NOT NEEDED — Confirmed unnecessary
 [-] Free tier — replaced by subscription-only model.
 [-] PADDLE_PRICE_TEAM — old plan removed, replaced by Starter/Pro.
 [-] statement_timeout flag in Cloud SQL — not available, skip it.
-[-] OpenRouter — code written but commented out. NVIDIA NIM is active.
+[-] OpenRouter — code written but commented out. OpenCode Go is active.
+[-] Dollar amounts for balance/usage — replaced by percentage display.
+[-] NVIDIA NIM labels — replaced with "OpenCode Go" / "OpenCode API Key" throughout.
+[-] PyJWT + bcrypt manual install — now in requirements.txt.
 
 
 ================================================================================

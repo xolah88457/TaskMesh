@@ -28,60 +28,14 @@ DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 # ]
 # ── End OpenRouter ─────────────────────────────────────────────────────────────
 
+# Default agent layout — manager only. Users add executors via Settings.
+# The manager is always required as the pipeline coordinator.
 DEFAULT_AGENTS = [
     {
         "id": "manager",    "name": "Manager",    "role": "Coordinator",
         "model": "deepseek-v4-pro",
         "temperature": 0.6, "top_p": 0.9, "top_k": 0, "thinking_budget": 0,
         "color": "#6366f1", "icon": "👔", "planner": False,
-    },
-    {
-        "id": "webdev",     "name": "WebDev",     "role": "Architect",
-        "model": "kimi-k2.6",
-        "temperature": 0.6, "top_p": 0.9, "top_k": 0, "thinking_budget": 0,
-        "color": "#8b5cf6", "icon": "🏗", "planner": True,
-    },
-    {
-        "id": "researcher", "name": "Researcher", "role": "Tech Lead",
-        "model": "kimi-k2.5",
-        "temperature": 0.6, "top_p": 0.9, "top_k": 0, "thinking_budget": 0,
-        "color": "#67e8f9", "icon": "🧠", "planner": True,
-    },
-    {
-        "id": "backend",    "name": "Backend",    "role": "API",
-        "model": "deepseek-v4-flash",
-        "temperature": 0.5, "top_p": 0.85, "top_k": 0, "thinking_budget": 0,
-        "color": "#f97316", "icon": "⚙️", "planner": False,
-    },
-    {
-        "id": "frontend",   "name": "Frontend",   "role": "UI/UX",
-        "model": "mimo-v2.5",
-        "temperature": 0.6, "top_p": 0.9, "top_k": 0, "thinking_budget": 0,
-        "color": "#22c55e", "icon": "🎨", "planner": False,
-    },
-    {
-        "id": "tester",     "name": "Tester",     "role": "QA",
-        "model": "qwen3.5-plus",
-        "temperature": 0.5, "top_p": 0.85, "top_k": 0, "thinking_budget": 0,
-        "color": "#ef4444", "icon": "🧪", "planner": False,
-    },
-    {
-        "id": "docs",       "name": "Docs",       "role": "Writer",
-        "model": "qwen3.5-plus",
-        "temperature": 0.4, "top_p": 0.85, "top_k": 0, "thinking_budget": 0,
-        "color": "#84cc16", "icon": "📝", "planner": False,
-    },
-    {
-        "id": "logger",     "name": "Logger",     "role": "Chronicler",
-        "model": "qwen3.5-plus",
-        "temperature": 0.3, "top_p": 0.9, "top_k": 0, "thinking_budget": 0,
-        "color": "#f59e0b", "icon": "🪵", "planner": False,
-    },
-    {
-        "id": "reviewer",   "name": "Reviewer",   "role": "Code Review",
-        "model": "deepseek-v4-pro",
-        "temperature": 0.6, "top_p": 0.9, "top_k": 0, "thinking_budget": 0,
-        "color": "#e879f9", "icon": "🔍", "planner": False,
     },
 ]
 
