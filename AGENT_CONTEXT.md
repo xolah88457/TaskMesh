@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-20 (Dashboard UX + Agent Layout session)
+Last updated: 2026-05-20 (Model List Overhaul session)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -77,9 +77,10 @@ AI provider (active):
   Flat subscription: $5 first month, then $10/month.
   Auth: OPENCODE_GO_API_KEY env var.
   Model IDs are short strings: deepseek-v4-pro, kimi-k2.6, qwen3.5-plus, etc.
-  Note: MiniMax M2.7 / M2.5 use Anthropic format — incompatible, do not assign to agents.
-  Note: Thinking budgets disabled — NVIDIA-specific extra_body format not supported here.
-        Will re-enable when switching to OpenRouter (see THINKING_MODEL_IDS in base_agent.py).
+  Curated model set: 13 models across 3 tiers — Flagship (6), Balanced (6), Fast (1).
+  See Section 15 for full pricing/PRO_ONLY_MODELS table.
+  Note: MiniMax M2.7 / M2.5 use Anthropic format (ANTHROPIC_MODEL_IDS in base_agent.py).
+  Note: Thinking budgets disabled — provider-specific extra_body format not supported.
 
 AI provider (next step — code ready but inactive):
   OpenRouter at https://openrouter.ai/api/v1
@@ -1118,7 +1119,7 @@ Top-level fields:
   sprint: string  — displayed in the header (e.g. "Sprint #1")
   provider.name: string  — display name (e.g. "NVIDIA NIM")
   provider.baseURL: string  — OpenAI-compatible API base URL
-  provider.apiKey: string  — API key; if empty, fallback to NVIDIA_API_KEY env var
+  provider.apiKey: string  — API key; if empty, fallback to OPENCODE_GO_API_KEY env var
   agents: array of agent config objects
 
 Per-agent fields:
@@ -1176,20 +1177,9 @@ TASK TAG MAPPING:
   Tags are computed by agent_id.upper()[:3] in the orchestrator.
 
 THINKING BUDGET:
-  Only these 9 models support enable_thinking via extra_body:
-    qwen/qwen3-coder-480b-a35b-instruct   levels: 1024/4096/12288/24576/38912
-    qwen/qwen3.5-397b-a17b                levels: 1024/4096/12288/24576/38912
-    qwen/qwen3.5-122b-a10b                levels: 512/2048/8192/16384/32768
-    qwen/qwen3-next-80b-a3b-instruct      levels: 512/2048/8192/16384/32768
-    deepseek-ai/deepseek-v4-pro           levels: 512/2048/8192/16384/32768
-    moonshotai/kimi-k2.6                  levels: 512/2048/8192/16384/32768
-    minimax/minimax-m2.7                  levels: 512/2048/8192/16384/32768
-    deepseek-ai/deepseek-v4-flash         levels: 256/1024/4096/8192/16384
-    google/gemma-4-31b-it                 levels: 512/2048/6144/10240/16384
-  These are defined in THINKING_MODEL_IDS set in base_agent.py.
-  When thinking_budget > 0: extra_body["thinking_budget"] = thinking_budget + enable_thinking: True
-  When thinking_budget == 0: extra_body["chat_template_kwargs"] = {"enable_thinking": False}
-  Other models: extra_body is empty or just has top_k if > 0.
+  Currently disabled (THINKING_MODEL_IDS = empty set in base_agent.py).
+  OpenCode Go does not document supported thinking budget parameters.
+  Will re-enable with confirmed values when switching to OpenRouter.
 
 BASE_AGENT.RUN() RETURN VALUE:
   run() returns a dict, NOT a bare string:
@@ -1411,31 +1401,26 @@ CREDIT DEPLETION:
   absolute dollar values.
 
 MODEL PRICING TABLE (billing.py — cents per 1000 tokens, prompt / completion):
-  deepseek-ai/deepseek-v4-pro                   (0.014, 0.028)   [PRO ONLY]
-  moonshotai/kimi-k2.6                          (0.014, 0.028)   [PRO ONLY]
-  mistralai/mistral-large-3-675b-instruct-2512  (0.020, 0.060)   [PRO ONLY]
-  qwen/qwen3-coder-480b-a35b-instruct           (0.025, 0.075)   [PRO ONLY]
-  deepseek/deepseek-chat                        (0.014, 0.028)   [PRO ONLY - OpenRouter]
-  moonshotai/kimi-k2                            (0.014, 0.028)   [PRO ONLY - OpenRouter]
-  mistralai/mistral-large-2411                  (0.020, 0.060)   [PRO ONLY - OpenRouter]
-  qwen/qwen-2.5-coder-32b-instruct              (0.025, 0.075)   [PRO ONLY - OpenRouter]
-  deepseek-ai/deepseek-v4-flash                 (0.007, 0.014)   [Starter OK]
-  mistralai/ministral-14b-instruct-2512         (0.010, 0.030)   [Starter OK]
-  mistralai/mistral-7b-instruct-v0.3            (0.006, 0.018)   [Starter OK]
-  mistralai/ministral-8b                        (0.006, 0.018)   [Starter OK]
-  google/gemma-4-31b-it                         (0.010, 0.030)   [Starter OK]
-  google/gemma-2-27b-it                         (0.008, 0.025)   [Starter OK]
-  meta/llama-3.1-8b-instruct                    (0.005, 0.010)   [Starter OK]
-  meta-llama/llama-3.1-8b-instruct              (0.005, 0.010)   [Starter OK]
-  DEFAULT (unknown models)                      (0.020, 0.020)
+  DeepSeek V4 Pro   — deepseek-v4-pro   (0.014, 0.028)   [PRO ONLY — Flagship]
+  GLM-5.1           — glm-5.1           (0.010, 0.020)   [PRO ONLY — Flagship]
+  Kimi K2.6         — kimi-k2.6         (0.014, 0.028)   [PRO ONLY — Flagship]
+  MiMo V2.5 Pro     — mimo-v2.5-pro     (0.012, 0.024)   [PRO ONLY — Flagship]
+  MiniMax M2.7      — minimax-m2.7      (0.014, 0.028)   [PRO ONLY — Flagship]
+  Qwen3.6 Plus      — qwen3.6-plus      (0.006, 0.012)   [PRO ONLY — Flagship]
+  DeepSeek V4 Flash — deepseek-v4-flash (0.007, 0.014)   [Starter OK — Balanced]
+  GLM-5             — glm-5             (0.008, 0.016)   [Starter OK — Balanced]
+  Kimi K2.5         — kimi-k2.5         (0.010, 0.020)   [Starter OK — Balanced]
+  MiMo V2.5         — mimo-v2.5         (0.008, 0.016)   [Starter OK — Balanced]
+  MiniMax M2.5      — minimax-m2.5      (0.008, 0.016)   [Starter OK — Balanced]
+  Qwen3.5 Plus      — qwen3.5-plus      (0.004, 0.008)   [Starter OK — Balanced]
+  Nemotron 3 Super  — nemotron-3-super  (0.004, 0.008)   [Starter OK — Fast]
+  DEFAULT (unknown)                      (0.020, 0.020)
 
 PRO_ONLY_MODELS (frozenset in billing.py):
-  NVIDIA IDs: deepseek-ai/deepseek-v4-pro, moonshotai/kimi-k2.6,
-    mistralai/mistral-large-3-675b-instruct-2512, qwen/qwen3-coder-480b-a35b-instruct
-  OpenRouter equivalents: deepseek/deepseek-chat, moonshotai/kimi-k2,
-    mistralai/mistral-large-2411, qwen/qwen-2.5-coder-32b-instruct
+  All 6 Flagship models: deepseek-v4-pro, glm-5.1, kimi-k2.6,
+    mimo-v2.5-pro, minimax-m2.7, qwen3.6-plus
 
-STARTER_MODEL_FALLBACK = "deepseek-ai/deepseek-v4-flash"
+STARTER_MODEL_FALLBACK = "deepseek-v4-flash"
   Applied to any agent whose configured model is in PRO_ONLY_MODELS when plan="starter".
 
 DEV BYPASS:
@@ -1847,7 +1832,7 @@ Check GitHub connection:
 SECTION 24: CURRENT STATUS — WHAT IS DONE AND WHAT REMAINS
 ================================================================================
 
-Last updated: 2026-05-20 (Dashboard UX + Agent Layout session)
+Last updated: 2026-05-20 (Model List Overhaul session)
 This section tracks the real-world setup state for this specific deployment.
 Read this section first in a new session to know exactly where to pick up.
 
@@ -1955,6 +1940,33 @@ DONE — Dashboard UX & Agent Layout (2026-05-20)
     - Saves via the regular Save & Apply flow
 
 [x] TypeScript build passes clean (0 errors)
+
+--------------------------------------------------------------------------------
+DONE — Model List Overhaul (2026-05-20)
+--------------------------------------------------------------------------------
+
+[x] Curated 13-model set replacing 40+ old models
+    Flagship (6, Pro-only): deepseek-v4-pro, glm-5.1, kimi-k2.6,
+      mimo-v2.5-pro, minimax-m2.7, qwen3.6-plus
+    Balanced (6, Starter OK): deepseek-v4-flash, glm-5, kimi-k2.5,
+      mimo-v2.5, minimax-m2.5, qwen3.5-plus
+    Fast (1, Starter OK): nemotron-3-super
+
+[x] MODEL_GROUPS in SettingsPanel.tsx — 3 categories (removed "Code", renamed "Fast/Small"→"Fast")
+
+[x] MODEL_RECOMMENDATIONS in SettingsPanel.tsx — sampling defaults for all 13 models
+
+[x] MODEL_PRICING in billing.py — per-token rates for all 13 models, old entries purged
+
+[x] PRO_ONLY_MODELS in billing.py — all 6 Flagship models (removed OpenRouter equivalents)
+
+[x] OpenRouter comment blocks cleaned in base_agent.py and config_loader.py
+
+[x] Existing agent-team.config.json already used new IDs — no migration needed
+
+[x] STARTER_MODEL_FALLBACK = "deepseek-v4-flash" (Balanced, cheapest Flagship-capable)
+
+--------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
 TODO — External services not yet configured

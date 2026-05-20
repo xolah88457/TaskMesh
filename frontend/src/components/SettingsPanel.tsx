@@ -409,61 +409,29 @@ const MODEL_GROUPS = [
   {
     label: 'Flagship',
     models: [
-      { id: 'nvidia/llama-3.1-nemotron-70b-instruct',        label: 'Nemotron 70B' },
-      { id: 'meta/llama-4-maverick-17b-128e-instruct',       label: 'Llama 4 Maverick 17B' },
-      { id: 'meta/llama-3.3-70b-instruct',                   label: 'Llama 3.3 70B' },
-      { id: 'qwen/qwen3-coder-480b-a35b-instruct',           label: 'Qwen3 Coder 480B' },
-      { id: 'qwen/qwen3.5-397b-a17b',                        label: 'Qwen3.5 397B' },
-      { id: 'deepseek-ai/deepseek-v4-pro',                   label: 'DeepSeek V4 Pro' },
-      { id: 'deepseek-ai/deepseek-v4-flash',                 label: 'DeepSeek V4 Flash' },
-      { id: 'mistralai/mistral-large-3-675b-instruct-2512',  label: 'Mistral Large 3 675B' },
-      { id: 'moonshotai/kimi-k2.6',                          label: 'Kimi K2.6' },
-      { id: 'minimax/minimax-m2.7',                          label: 'MiniMax M2.7' },
-      { id: 'openai/gpt-oss-120b',                           label: 'GPT OSS 120B' },
+      { id: 'deepseek-v4-pro',   label: 'DeepSeek V4 Pro' },
+      { id: 'glm-5.1',           label: 'GLM-5.1' },
+      { id: 'kimi-k2.6',         label: 'Kimi K2.6' },
+      { id: 'mimo-v2.5-pro',     label: 'MiMo V2.5 Pro' },
+      { id: 'minimax-m2.7',      label: 'MiniMax M2.7' },
+      { id: 'qwen3.6-plus',      label: 'Qwen3.6 Plus' },
     ],
   },
   {
     label: 'Balanced',
     models: [
-      { id: 'meta/llama-3.1-70b-instruct',                   label: 'Llama 3.1 70B' },
-      { id: 'qwen/qwen3.5-122b-a10b',                        label: 'Qwen3.5 122B' },
-      { id: 'qwen/qwen3-next-80b-a3b-instruct',              label: 'Qwen3 80B' },
-      { id: 'mistralai/mistral-medium-3.5-128b',             label: 'Mistral Medium 3.5 128B' },
-      { id: 'mistralai/mistral-nemotron',                    label: 'Mistral Nemotron' },
-      { id: 'mistralai/mixtral-8x22b-instruct-v0.1',         label: 'Mixtral 8×22B' },
-      { id: 'mistralai/mistral-large-2-instruct',            label: 'Mistral Large 2' },
-      { id: 'google/gemma-4-31b-it',                         label: 'Gemma 4 31B' },
-      { id: 'google/gemma-3-12b-it',                         label: 'Gemma 3 12B' },
-      { id: 'bytedance/seed-oss-36b-instruct',               label: 'Seed 36B' },
-      { id: 'microsoft/phi-3.5-moe-instruct',                label: 'Phi 3.5 MoE' },
-      { id: 'ai21labs/jamba-1.5-large-instruct',             label: 'Jamba 1.5 Large' },
-      { id: 'openai/gpt-oss-20b',                            label: 'GPT OSS 20B' },
+      { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+      { id: 'glm-5',             label: 'GLM-5' },
+      { id: 'kimi-k2.5',         label: 'Kimi K2.5' },
+      { id: 'mimo-v2.5',         label: 'MiMo V2.5' },
+      { id: 'minimax-m2.5',      label: 'MiniMax M2.5' },
+      { id: 'qwen3.5-plus',      label: 'Qwen3.5 Plus' },
     ],
   },
   {
-    label: 'Fast / Small',
+    label: 'Fast',
     models: [
-      { id: 'meta/llama-3.1-8b-instruct',                    label: 'Llama 3.1 8B' },
-      { id: 'meta/llama-3.2-3b-instruct',                    label: 'Llama 3.2 3B' },
-      { id: 'meta/llama-3.2-1b-instruct',                    label: 'Llama 3.2 1B' },
-      { id: 'nv-mistralai/mistral-nemo-12b-instruct',        label: 'Mistral NeMo 12B' },
-      { id: 'mistralai/mistral-7b-instruct-v0.3',            label: 'Mistral 7B' },
-      { id: 'mistralai/ministral-14b-instruct-2512',         label: 'Ministral 14B' },
-      { id: 'google/gemma-3-4b-it',                          label: 'Gemma 3 4B' },
-      { id: 'google/gemma-3n-e4b-it',                        label: 'Gemma 3n E4B' },
-      { id: 'microsoft/phi-4-mini-instruct',                 label: 'Phi 4 Mini' },
-      { id: 'ibm/granite-3.0-8b-instruct',                   label: 'Granite 3.0 8B' },
-    ],
-  },
-  {
-    label: 'Code',
-    models: [
-      { id: 'mistralai/codestral-22b-instruct-v0.1',         label: 'Codestral 22B' },
-      { id: 'meta/codellama-70b',                            label: 'CodeLlama 70B' },
-      { id: 'google/codegemma-7b',                           label: 'CodeGemma 7B' },
-      { id: 'ibm/granite-34b-code-instruct',                 label: 'Granite 34B Code' },
-      { id: 'ibm/granite-8b-code-instruct',                  label: 'Granite 8B Code' },
-      { id: 'bigcode/starcoder2-15b',                        label: 'StarCoder2 15B' },
+      { id: 'nemotron-3-super',  label: 'Nemotron 3 Super' },
     ],
   },
 ]
@@ -475,61 +443,26 @@ const ICONS = ['👔','🏗','🎨','⚙️','🧪','🔬','📊','🎯','🚀',
 interface Rec { temperature: number; top_p: number; top_k?: number; note?: string }
 
 const MODEL_RECOMMENDATIONS: Record<string, Rec> = {
-  // ── Meta Llama ──────────────────────────────────────────────
-  'meta/llama-4-maverick-17b-128e-instruct':       { temperature: 0.6, top_p: 0.9 },
-  'meta/llama-3.3-70b-instruct':                   { temperature: 0.6, top_p: 0.9 },
-  'meta/llama-3.1-70b-instruct':                   { temperature: 0.6, top_p: 0.9 },
-  'meta/llama-3.1-8b-instruct':                    { temperature: 0.6, top_p: 0.9 },
-  'meta/llama-3.2-3b-instruct':                    { temperature: 0.6, top_p: 0.9 },
-  'meta/llama-3.2-1b-instruct':                    { temperature: 0.6, top_p: 0.9 },
-  'meta/codellama-70b':                            { temperature: 0.4, top_p: 0.9 },
-  // ── NVIDIA ──────────────────────────────────────────────────
-  'nvidia/llama-3.1-nemotron-70b-instruct':        { temperature: 0.6, top_p: 0.9 },
-  // ── Qwen ────────────────────────────────────────────────────
-  'qwen/qwen3-coder-480b-a35b-instruct':           { temperature: 0.7, top_p: 0.8,  top_k: 20, note: 'Non-thinking mode' },
-  'qwen/qwen3.5-397b-a17b':                        { temperature: 0.6, top_p: 0.95, top_k: 20 },
-  'qwen/qwen3.5-122b-a10b':                        { temperature: 0.6, top_p: 0.95, top_k: 20 },
-  'qwen/qwen3-next-80b-a3b-instruct':              { temperature: 0.7, top_p: 0.8,  top_k: 20, note: 'Non-thinking mode' },
   // ── DeepSeek ────────────────────────────────────────────────
-  'deepseek-ai/deepseek-v4-pro':                   { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
-  'deepseek-ai/deepseek-v4-flash':                 { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
-  'deepseek-ai/deepseek-r1':                       { temperature: 0.6, top_p: 0.95 },
-  // ── Mistral ─────────────────────────────────────────────────
-  'mistralai/mistral-large-3-675b-instruct-2512':  { temperature: 0.7, top_p: 0.95 },
-  'mistralai/mistral-large-2-instruct':            { temperature: 0.7, top_p: 0.95 },
-  'mistralai/mistral-medium-3.5-128b':             { temperature: 0.15,top_p: 0.95 },
-  'mistralai/mistral-nemotron':                    { temperature: 0.7, top_p: 0.95 },
-  'mistralai/mixtral-8x22b-instruct-v0.1':         { temperature: 0.7, top_p: 0.95 },
-  'mistralai/mistral-7b-instruct-v0.3':            { temperature: 0.7, top_p: 0.95 },
-  'mistralai/ministral-14b-instruct-2512':         { temperature: 0.7, top_p: 0.95 },
-  'mistralai/codestral-22b-instruct-v0.1':         { temperature: 0.7, top_p: 0.95 },
-  'nv-mistralai/mistral-nemo-12b-instruct':        { temperature: 0.7, top_p: 0.95 },
-  // ── Google Gemma ────────────────────────────────────────────
-  'google/gemma-4-31b-it':                         { temperature: 1.0, top_p: 0.96, top_k: 64 },
-  'google/gemma-3-12b-it':                         { temperature: 1.0, top_p: 0.96, top_k: 64 },
-  'google/gemma-3-4b-it':                          { temperature: 1.0, top_p: 0.96, top_k: 64 },
-  'google/gemma-3n-e4b-it':                        { temperature: 1.0, top_p: 0.96, top_k: 64 },
-  'google/codegemma-7b':                           { temperature: 0.5, top_p: 0.96, top_k: 64 },
-  // ── Microsoft Phi ───────────────────────────────────────────
-  'microsoft/phi-4-mini-instruct':                 { temperature: 0.8, top_p: 0.95, top_k: 50 },
-  'microsoft/phi-3.5-moe-instruct':                { temperature: 0.8, top_p: 0.95, top_k: 50 },
-  // ── ByteDance ───────────────────────────────────────────────
-  'bytedance/seed-oss-36b-instruct':               { temperature: 0.7, top_p: 0.9 },
-  // ── MoonShot ────────────────────────────────────────────────
-  'moonshotai/kimi-k2.6':                          { temperature: 0.6, top_p: 0.9 },
+  'deepseek-v4-pro':  { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
+  'deepseek-v4-flash':{ temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
+  // ── GLM ─────────────────────────────────────────────────────
+  'glm-5.1':          { temperature: 0.7, top_p: 0.95 },
+  'glm-5':            { temperature: 0.7, top_p: 0.95 },
+  // ── Kimi ────────────────────────────────────────────────────
+  'kimi-k2.6':        { temperature: 0.6, top_p: 0.9 },
+  'kimi-k2.5':        { temperature: 0.6, top_p: 0.9 },
+  // ── MiMo ────────────────────────────────────────────────────
+  'mimo-v2.5-pro':    { temperature: 0.7, top_p: 0.95 },
+  'mimo-v2.5':        { temperature: 0.7, top_p: 0.95 },
   // ── MiniMax ─────────────────────────────────────────────────
-  'minimax/minimax-m2.7':                          { temperature: 0.7, top_p: 0.9 },
-  // ── AI21 ────────────────────────────────────────────────────
-  'ai21labs/jamba-1.5-large-instruct':             { temperature: 0.7, top_p: 0.9 },
-  // ── OpenAI OSS ──────────────────────────────────────────────
-  'openai/gpt-oss-120b':                           { temperature: 0.7, top_p: 1.0 },
-  'openai/gpt-oss-20b':                            { temperature: 0.7, top_p: 1.0 },
-  // ── IBM Granite ─────────────────────────────────────────────
-  'ibm/granite-34b-code-instruct':                 { temperature: 0.5, top_p: 0.85 },
-  'ibm/granite-8b-code-instruct':                  { temperature: 0.5, top_p: 0.85 },
-  'ibm/granite-3.0-8b-instruct':                   { temperature: 0.7, top_p: 0.9 },
-  // ── BigCode ─────────────────────────────────────────────────
-  'bigcode/starcoder2-15b':                        { temperature: 0.4, top_p: 0.95 },
+  'minimax-m2.7':     { temperature: 0.7, top_p: 0.9 },
+  'minimax-m2.5':     { temperature: 0.7, top_p: 0.9 },
+  // ── Qwen ────────────────────────────────────────────────────
+  'qwen3.6-plus':     { temperature: 0.6, top_p: 0.95, top_k: 20 },
+  'qwen3.5-plus':     { temperature: 0.6, top_p: 0.95, top_k: 20 },
+  // ── Nemotron ────────────────────────────────────────────────
+  'nemotron-3-super': { temperature: 0.6, top_p: 0.9 },
 }
 
 function defaultAgent(presetId: string, model: string, overrides: Partial<AgentCfg> = {}): AgentCfg {

@@ -7,26 +7,12 @@ from anthropic import AsyncAnthropic
 #   1. Set OPENROUTER_API_KEY in your .env
 #   2. Uncomment the block below
 #   3. Update DEFAULT_BASE_URL in config_loader.py to OPENROUTER_BASE_URL
-#   4. Switch DEFAULT_AGENTS model IDs to OPENROUTER_MODEL_MAP values
-#   5. Re-enable thinking budgets in THINKING_MODEL_IDS below (OpenRouter exposes them)
+#   4. Re-enable thinking budgets in THINKING_MODEL_IDS below (OpenRouter exposes them)
 #
 # OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # OPENROUTER_EXTRA_HEADERS = {
 #     "HTTP-Referer": os.environ.get("FRONTEND_URL", "http://localhost:5173"),
 #     "X-Title": "TaskMesh",
-# }
-#
-# OpenRouter model IDs for each agent role:
-# OPENROUTER_MODEL_MAP = {
-#     "manager":    "deepseek/deepseek-chat",           # DeepSeek V4 — coordinator
-#     "webdev":     "moonshotai/kimi-k2",               # Kimi K2 — architect/planner
-#     "researcher": "moonshotai/kimi-k2",               # Kimi K2 — tech lead
-#     "backend":    "deepseek/deepseek-chat",           # DeepSeek V4 — API builder
-#     "frontend":   "qwen/qwen-2.5-coder-32b-instruct", # Qwen Coder — UI/UX
-#     "tester":     "qwen/qwen-2.5-coder-32b-instruct", # Qwen Coder — QA
-#     "docs":       "mistralai/mistral-7b-instruct",    # Mistral 7B — writer
-#     "logger":     "meta-llama/llama-3.1-8b-instruct", # Llama 8B — chronicler
-#     "reviewer":   "deepseek/deepseek-chat",           # DeepSeek V4 — reviewer
 # }
 #
 # def _get_openrouter_client(api_key: str) -> AsyncOpenAI:

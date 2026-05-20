@@ -9,23 +9,11 @@ DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 # ── OpenRouter (inactive — switch when ready) ──────────────────────────────────
 # When switching to OpenRouter:
 #   1. Replace DEFAULT_BASE_URL above with OPENROUTER_BASE_URL
-#   2. Replace DEFAULT_AGENTS model IDs with OPENROUTER_DEFAULT_AGENTS below
+#   2. Replace DEFAULT_AGENTS model IDs with OPENROUTER equivalents
 #   3. Replace OPENCODE_GO_API_KEY env var with OPENROUTER_API_KEY in config load
 #   4. Re-enable THINKING_MODEL_IDS in base_agent.py
 #
 # OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-#
-# OPENROUTER_DEFAULT_AGENTS = [
-#     {"id": "manager",    "model": "deepseek/deepseek-chat",             "temperature": 0.6},
-#     {"id": "webdev",     "model": "moonshotai/kimi-k2",                 "temperature": 0.6},
-#     {"id": "researcher", "model": "moonshotai/kimi-k2",                 "temperature": 0.6},
-#     {"id": "backend",    "model": "deepseek/deepseek-chat",             "temperature": 0.5},
-#     {"id": "frontend",   "model": "qwen/qwen-2.5-coder-32b-instruct",  "temperature": 0.6},
-#     {"id": "tester",     "model": "qwen/qwen-2.5-coder-32b-instruct",  "temperature": 0.5},
-#     {"id": "docs",       "model": "mistralai/mistral-7b-instruct",      "temperature": 0.4},
-#     {"id": "logger",     "model": "meta-llama/llama-3.1-8b-instruct",   "temperature": 0.3},
-#     {"id": "reviewer",   "model": "deepseek/deepseek-chat",             "temperature": 0.6},
-# ]
 # ── End OpenRouter ─────────────────────────────────────────────────────────────
 
 # Default agent layout — manager only. Users add executors via Settings.

@@ -83,27 +83,23 @@ def _build_pack_credits() -> dict[str, int]:
 # ── Model pricing table — cents per 1 000 tokens (prompt, completion) ─────────
 # Rates are estimated market equivalents used to charge our users.
 # OpenCode Go is a flat subscription for us, but we still bill users per-token.
-# Rates will become exact when switching to OpenRouter (pay-per-token).
 MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # Pro-tier OpenCode Go models
+    # Flagship (Pro tier)
     "deepseek-v4-pro":   (0.014, 0.028),
-    "kimi-k2.6":         (0.014, 0.028),
     "glm-5.1":           (0.010, 0.020),
+    "kimi-k2.6":         (0.014, 0.028),
     "mimo-v2.5-pro":     (0.012, 0.024),
-    # Mid-tier OpenCode Go models
-    "kimi-k2.5":         (0.010, 0.020),
-    "glm-5":             (0.008, 0.016),
-    "mimo-v2.5":         (0.008, 0.016),
+    "minimax-m2.7":      (0.014, 0.028),
     "qwen3.6-plus":      (0.006, 0.012),
-    # Starter/cheap OpenCode Go models
+    # Balanced
     "deepseek-v4-flash": (0.007, 0.014),
+    "glm-5":             (0.008, 0.016),
+    "kimi-k2.5":         (0.010, 0.020),
+    "mimo-v2.5":         (0.008, 0.016),
+    "minimax-m2.5":      (0.008, 0.016),
     "qwen3.5-plus":      (0.004, 0.008),
-    # OpenRouter future equivalents (kept for migration readiness)
-    "deepseek/deepseek-chat":               (0.014, 0.028),
-    "moonshotai/kimi-k2":                   (0.014, 0.028),
-    "qwen/qwen-2.5-coder-32b-instruct":     (0.007, 0.014),
-    "meta-llama/llama-3.1-8b-instruct":     (0.005, 0.010),
-    "mistralai/mistral-7b-instruct":        (0.006, 0.018),
+    # Fast
+    "nemotron-3-super":  (0.004, 0.008),
 }
 DEFAULT_PRICING: tuple[float, float] = (0.020, 0.020)  # fallback for unknown models
 
@@ -111,14 +107,12 @@ DEFAULT_PRICING: tuple[float, float] = (0.020, 0.020)  # fallback for unknown mo
 # Any agent using these models will be downgraded to STARTER_MODEL_FALLBACK
 # when the user's plan is "starter".
 PRO_ONLY_MODELS: frozenset[str] = frozenset({
-    # OpenCode Go pro-tier
     "deepseek-v4-pro",
-    "kimi-k2.6",
     "glm-5.1",
+    "kimi-k2.6",
     "mimo-v2.5-pro",
-    # OpenRouter equivalents (for future migration)
-    "deepseek/deepseek-chat",
-    "moonshotai/kimi-k2",
+    "minimax-m2.7",
+    "qwen3.6-plus",
 })
 
 STARTER_MODEL_FALLBACK = "deepseek-v4-flash"

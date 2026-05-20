@@ -1,5 +1,5 @@
 # TaskMesh — Project State
-> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-20 (Dashboard UX + Agent Layout session).
+> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-20 (Model List Overhaul session).
 > Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`.
 
 ---
@@ -194,7 +194,7 @@ curl -X POST http://localhost:8000/api/auth/register \
 | JWT refresh after name/email update | The user pill in the header reads from the JWT. Without a new token, the display doesn't update until page reload. |
 | `socket_app` not `app` as uvicorn entry point | `python-socketio` wraps FastAPI in an ASGI middleware. Using `app` bypasses the Socket.IO layer, causing 403 on all WebSocket connections. |
 | No free tier | Every payment is 50% API cost. Free tier bleeds money. All users must be on a paid plan to start runs. |
-| Starter: 3 agents, standard models only | Cheaper API cost. Flagship models (deepseek-v4-pro, kimi-k2, etc.) are Pro-only. Starter falls back to `deepseek-v4-flash`. |
+| Starter: 3 agents, standard models only | Cheaper API cost. Flagship models (deepseek-v4-pro, kimi-k2.6, glm-5.1, mimo-v2.5-pro, minimax-m2.7, qwen3.6-plus) are Pro-only. Starter falls back to `deepseek-v4-flash`. |
 | Balance shown as percentage, not dollars | Usage amounts should never show dollar values. Only payment-related items (plan prices, pack costs) use dollars. Percentages are clearer for credit depletion tracking. |
 | BillingPage centered layout | Previous left-aligned layout left half the screen as dead space. Centered layout with `maxWidth: 780` uses screen real estate better. |
 | Admin bypass redirects to dashboard | After entering valid admin key, user should be taken directly to the main app, not left on the billing page. `navigate('/')` after `fetchUsage()` ensures BillingGate sees the updated plan. |
@@ -202,6 +202,7 @@ curl -X POST http://localhost:8000/api/auth/register \
 | Settings API key section relabeled to OpenCode | Provider is OpenCode Go (not NVIDIA NIM). Settings label, placeholder, and helper text updated. |
 | "Recommended layout" button one-click agent setup | Applies a tested 9-agent configuration with specific model assignments. Replaces current agents with confirmation. |
 | "+ Add agents" button in sidebar | Quick access from the main dashboard to agent configuration, reducing friction for new users with an empty agent list. |
+| Curated 13-model set (Flagship/Balanced/Fast) | Replaced 40+ models with focused 13. Removed Llama/Mistral/Phi/Gemma/etc. 3 categories: Flagship (6, Pro-only), Balanced (6), Fast (1). |
 
 ---
 
@@ -242,8 +243,8 @@ The current milestone is "working SaaS product, end-to-end":
 
 ## Where I Left Off (Agent Recovery)
 
-**Session ended:** 2026-05-20 (Dashboard UX + Agent Layout)  
-**Last action:** Implemented 4 dashboard UX fixes — empty default agent layout, OpenCode API key relabeling, "+ Add agents" sidebar button, "Recommended layout" settings button. Updated TODO.md, PROJECT.md, AGENT_CONTEXT.md. TypeScript build passed (0 errors).
+**Session ended:** 2026-05-20 (Model List Overhaul)  
+**Last action:** Replaced all 40+ models with a curated 13-model set across 3 tiers (Flagship 6, Balanced 6, Fast 1). Purged old Llama/Mistral/Phi/Gemma/Codestral/etc. IDs from SettingsPanel, billing.py, config_loader.py, base_agent.py. Updated all 3 docs. TypeScript build passed (0 errors).
 
 **State of the codebase:**
 - All code for billing redesign, account page, onboarding gate, and dev bypass is complete
@@ -252,6 +253,7 @@ The current milestone is "working SaaS product, end-to-end":
 - Settings panel: API key section now labeled for OpenCode Go/Zen, Save & Apply button no longer ghosts
 - Sidebar: "+ Add agents" button opens Settings for agent configuration
 - Settings: "Recommended layout" button applies a one-click 9-agent configuration
+- Model list: 13 models in 3 categories — Flagship (6), Balanced (6), Fast (1). All old models removed.
 - TypeScript build passes clean (0 errors)
 - Python syntax clean
 - Google OAuth works end-to-end
@@ -260,14 +262,13 @@ The current milestone is "working SaaS product, end-to-end":
 
 **Files changed most recently (this session):**
 ```
-backend/core/config_loader.py      DEFAULT_AGENTS reduced to manager-only
-frontend/src/components/SettingsPanel.tsx   API key relabel, Save&Apply fix, Recommended layout button
-frontend/src/components/AgentsList.tsx      "+ Add agents" button
-frontend/src/components/Sidebar.tsx         onAddAgents prop passthrough
-frontend/src/App.tsx                        onAddAgents callback to Sidebar
-TODO.md                                    added Dashboard UX section + decisions
-PROJECT.md                                 added decisions, updated recovery section
-AGENT_CONTEXT.md                           updated Sections 1, 12, 14, 22, 24
+frontend/src/components/SettingsPanel.tsx   MODEL_GROUPS (4→3 groups, 13 models), MODEL_RECOMMENDATIONS
+backend/api/billing.py                      MODEL_PRICING (13 models), PRO_ONLY_MODELS (6 Flagship)
+backend/core/config_loader.py               OpenRouter comments cleaned
+backend/agents/base_agent.py                OpenRouter model map removed from comments
+TODO.md                                     Model List Overhaul section + decision
+PROJECT.md                                  Updated decisions, session state
+AGENT_CONTEXT.md                            Updated model list, billing pricing, PRO_ONLY_MODELS
 ```
 
 **Next 3 concrete tasks:**

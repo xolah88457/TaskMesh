@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-20 (Dashboard UX + Agent Layout session). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-20 (Model List Overhaul session). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -47,6 +47,21 @@
   - Warns if no API key is configured (agents will fail to run)
   - Confirmation has "Apply and replace" and "Cancel" buttons
   - Replaces (not merges) existing agent config
+
+### Model List Overhaul (2026-05-20)
+- ✅ **All models replaced with curated 13-model set across 3 tiers**
+  - Flagship (6): DeepSeek V4 Pro, GLM-5.1, Kimi K2.6, MiMo V2.5 Pro, MiniMax M2.7, Qwen3.6 Plus
+  - Balanced (6): DeepSeek V4 Flash, GLM-5, Kimi K2.5, MiMo V2.5, MiniMax M2.5, Qwen3.5 Plus
+  - Fast (1): Nemotron 3 Super
+- ✅ **Old models completely removed** — all Llama, Mistral, GPT OSS, Phi, Jamba, Granite, Codestral, CodeLlama, Gemma, Seed, StarCoder, and old NVIDIA/Router IDs purged
+- ✅ **Fourth category "Code" removed**; "Fast / Small" renamed to "Fast"
+- ✅ **MODEL_GROUPS** in SettingsPanel.tsx — 4 groups → 3 groups with only the 13 new models
+- ✅ **MODEL_RECOMMENDATIONS** in SettingsPanel.tsx — sampling defaults (temperature, top_p, top_k) set for all 13 models
+- ✅ **MODEL_PRICING** in billing.py — per-token rates for all 13 models, old OpenRouter rates removed
+- ✅ **PRO_ONLY_MODELS** in billing.py — all 6 Flagship models are Pro-only; Balanced + Fast available to Starter
+- ✅ **OpenRouter comments cleaned** in base_agent.py and config_loader.py — old model ID maps removed
+- ✅ Existing agent-team.config.json models already matched new IDs — no migration needed
+- ✅ TypeScript build passes clean (0 errors)
 
 ### Infrastructure
 - ✅ Provider switched NVIDIA NIM → OpenCode Go (2026-05-20)
@@ -278,3 +293,4 @@ These are improvements to build next when external services are wired up.
 | 2026-05-20 | Default agent layout is manager-only | Fresh installs start with only the Manager coordinator. Users explicitly add workers via Settings or "+ Add agents" button. Avoids overwhelming new users with 9 agents before they understand the system. |
 | 2026-05-20 | "Recommended layout" button in Settings | One-click setup of all 9 agents with tested OpenCode Go model assignments. Replaces all current agents. Includes confirmation dialog and API key warning. |
 | 2026-05-20 | "+ Add agents" direct shortcut in sidebar | Quick access from the main dashboard to the agent configuration pane, reducing friction for new users who see an empty agent list. |
+| 2026-05-20 | Curated 13-model set (Flagship/Balanced/Fast) | Replaced 40+ disjoint models with a focused set of 13. 6 Flagship (Pro-only), 6 Balanced, 1 Fast. Removed old Llama/Mistral/Phi/Gemma/etc. Cleaner UX, easier pricing, consistent with OpenCode Go catalog. |
