@@ -110,6 +110,34 @@ export default function BillingPage() {
   const [loading, setLoading]       = useState(true)
   const [checkingOut, setCheckingOut] = useState<string | null>(null)
   const pollRef                     = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [adminOpen, setAdminOpen]   = useState(false)
+  const [adminKey, setAdminKey]     = useState('')
+  const [adminMsg, setAdminMsg]     = useState('')
+  const [adminBusy, setAdminBusy]   = useState(false)
+
+  const submitAdminBypass = async () => {
+    if (!adminKey.trim()) return
+    setAdminBusy(true)
+    setAdminMsg('')
+    try {
+      const r = await authFetch('/api/billing/admin-bypass', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ key: adminKey.trim() }),
+      })
+      if (r.ok) {
+        setAdminMsg('Access granted.')
+        setAdminKey('')
+        fetchUsage()
+      } else {
+        setAdminMsg('Invalid key.')
+      }
+    } catch {
+      setAdminMsg('Error — is the backend running?')
+    } finally {
+      setAdminBusy(false)
+    }
+  }
 
   const fetchUsage = () =>
     authFetch('/api/billing/usage')
@@ -323,6 +351,52 @@ export default function BillingPage() {
           <p className="mt-2 text-[10px]" style={{ color: 'var(--c-text-4)' }}>
             An active subscription is required to top up credits.
           </p>
+        )}
+
+        {/* ── Admin bypass — hidden, no label ── */}
+        <div className="mt-16 flex justify-end">
+          <button
+            onClick={() => { setAdminOpen(o => !o); setAdminMsg('') }}
+            className="text-[9px] opacity-20 hover:opacity-40 transition-opacity"
+            style={{ color: 'var(--c-text-4)' }}
+          >
+            ·
+          </button>
+        </div>
+        {adminOpen && (
+          <div
+            className="mt-2 p-3 rounded border"
+            style={{ borderColor: 'var(--c-border)', background: 'var(--c-surface-2)' }}
+          >
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={adminKey}
+                onChange={e => setAdminKey(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && submitAdminBypass()}
+                placeholder="Access key"
+                className="flex-1 text-xs font-mono rounded px-2 py-1 focus:outline-none"
+                style={{
+                  background: 'var(--c-input-bg)',
+                  border: '1px solid var(--c-border)',
+                  color: 'var(--c-text-1)',
+                }}
+              />
+              <button
+                onClick={submitAdminBypass}
+                disabled={adminBusy || !adminKey.trim()}
+                className="text-xs px-3 py-1 rounded disabled:opacity-40"
+                style={{ background: 'var(--c-accent)', color: '#000' }}
+              >
+                {adminBusy ? '…' : '→'}
+              </button>
+            </div>
+            {adminMsg && (
+              <p className="mt-1.5 text-[10px]" style={{ color: adminMsg === 'Access granted.' ? 'var(--c-accent)' : '#ef4444' }}>
+                {adminMsg}
+              </p>
+            )}
+          </div>
         )}
 
       </div>

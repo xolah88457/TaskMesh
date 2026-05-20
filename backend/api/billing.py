@@ -239,6 +239,26 @@ async def get_usage(user: dict = Depends(require_auth)):
     }
 
 
+ADMIN_BYPASS_KEY = os.environ.get("ADMIN_BYPASS_KEY", "")
+
+
+class AdminBypassRequest(BaseModel):
+    key: str
+
+
+@router.post("/admin-bypass")
+async def admin_bypass(body: AdminBypassRequest, user: dict = Depends(require_auth)):
+    """Grant the authenticated user a pro plan with generous credits using the admin key."""
+    if not ADMIN_BYPASS_KEY:
+        raise HTTPException(status_code=503, detail="Not configured")
+    if not hmac.compare_digest(body.key.encode(), ADMIN_BYPASS_KEY.encode()):
+        raise HTTPException(status_code=403, detail="Invalid key")
+
+    user_id = user.get("sub", "")
+    await _upsert_credits(user_id=user_id, plan="pro", add_cents=999999)
+    return {"status": "ok", "plan": "pro"}
+
+
 @router.post("/webhook")
 async def paddle_webhook(request: Request):
     """Receive Paddle payment events and update user plan / credits."""
