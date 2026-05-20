@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react'
+import logo from '../assets/logo.png'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { useAuthContext } from '../context/auth'
@@ -53,8 +54,7 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
       style={{ background: 'var(--c-surface-1)', borderColor: 'var(--c-border)' }}>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs font-mono shrink-0 h-7 self-center">
-        <span className="w-2 h-2 rounded-full animate-pulse shrink-0" style={{ background: 'var(--c-accent)' }} />
-        <span className="text-[var(--c-accent)] font-semibold tracking-wider whitespace-nowrap">TASKMESH</span>
+        <img src={logo} alt="TaskMesh" className="h-5 w-auto shrink-0" />
         {project && <>
           <span className="text-[var(--c-text-4)]">›</span>
           <span className="text-[var(--c-text-1)] whitespace-nowrap">{project}</span>
