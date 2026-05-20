@@ -1,0 +1,523 @@
+import { useEffect, useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuthFetch } from '../hooks/useAuthFetch'
+import { useAuthContext } from '../context/auth'
+
+interface Profile {
+  id: string
+  name: string
+  email: string
+  has_password: boolean
+  google_linked: boolean
+  github_linked: boolean
+  github_login: string | null
+  created_at: string | null
+}
+
+// ── Shared input style ─────────────────────────────────────────────────────────
+const inputCls = 'w-full text-xs px-3 py-2 rounded focus:outline-none'
+const inputStyle = {
+  background: 'var(--c-input-bg)',
+  border: '1px solid var(--c-border)',
+  color: 'var(--c-text-1)',
+}
+
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <h2 className="text-[10px] uppercase tracking-widest mb-3 mt-6 first:mt-0" style={{ color: 'var(--c-text-3)' }}>
+      {title}
+    </h2>
+  )
+}
+
+function StatusMsg({ msg, isError }: { msg: string; isError?: boolean }) {
+  if (!msg) return null
+  return (
+    <p className="text-[10px] mt-2" style={{ color: isError ? '#ef4444' : 'var(--c-accent)' }}>
+      {msg}
+    </p>
+  )
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
+
+export default function AccountPage() {
+  const authFetch            = useAuthFetch()
+  const { login, logout }    = useAuthContext()
+  const navigate             = useNavigate()
+
+  const [profile, setProfile]           = useState<Profile | null>(null)
+  const [loading, setLoading]           = useState(true)
+
+  // Profile form
+  const [name, setName]                 = useState('')
+  const [nameMsg, setNameMsg]           = useState('')
+  const [nameErr, setNameErr]           = useState(false)
+  const [nameSaving, setNameSaving]     = useState(false)
+
+  // Email form
+  const [newEmail, setNewEmail]         = useState('')
+  const [emailPw, setEmailPw]           = useState('')
+  const [emailMsg, setEmailMsg]         = useState('')
+  const [emailErr, setEmailErr]         = useState(false)
+  const [emailSaving, setEmailSaving]   = useState(false)
+
+  // Password form
+  const [curPw, setCurPw]               = useState('')
+  const [newPw, setNewPw]               = useState('')
+  const [pwMsg, setPwMsg]               = useState('')
+  const [pwErr, setPwErr]               = useState(false)
+  const [pwSaving, setPwSaving]         = useState(false)
+
+  // API key
+  const [apiKeyHasKey, setApiKeyHasKey]   = useState(false)
+  const [apiKeyPreview, setApiKeyPreview] = useState('')
+  const [apiKeyInput, setApiKeyInput]     = useState('')
+  const [apiKeyShow, setApiKeyShow]       = useState(false)
+  const [apiKeyMsg, setApiKeyMsg]         = useState('')
+  const [apiKeyErr, setApiKeyErr]         = useState(false)
+  const [apiKeySaving, setApiKeySaving]   = useState(false)
+
+  // Delete
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteMsg, setDeleteMsg]         = useState('')
+  const [deleting, setDeleting]           = useState(false)
+
+  useEffect(() => {
+    authFetch('/api/account/profile')
+      .then(r => r.json())
+      .then((p: Profile) => {
+        setProfile(p)
+        setName(p.name)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+    authFetch('/api/account/apikey')
+      .then(r => r.json())
+      .then((d: { has_key: boolean; preview: string }) => {
+        setApiKeyHasKey(d.has_key)
+        setApiKeyPreview(d.preview)
+      })
+      .catch(() => {})
+  }, [authFetch])
+
+  // ── Save name ──────────────────────────────────────────────────────────────
+  const saveName = async (e: FormEvent) => {
+    e.preventDefault()
+    setNameMsg(''); setNameErr(false); setNameSaving(true)
+    try {
+      const r = await authFetch('/api/account/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setNameMsg(d.detail ?? 'Failed'); setNameErr(true); return }
+      if (d.token) login(d.token)
+      setProfile(p => p ? { ...p, name: d.name } : p)
+      setNameMsg('Name updated.')
+    } catch { setNameMsg('Network error'); setNameErr(true) }
+    finally { setNameSaving(false) }
+  }
+
+  // ── Change email ───────────────────────────────────────────────────────────
+  const saveEmail = async (e: FormEvent) => {
+    e.preventDefault()
+    setEmailMsg(''); setEmailErr(false); setEmailSaving(true)
+    try {
+      const r = await authFetch('/api/account/email', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newEmail, password: emailPw }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setEmailMsg(d.detail ?? 'Failed'); setEmailErr(true); return }
+      if (d.token) login(d.token)
+      setProfile(p => p ? { ...p, email: d.email } : p)
+      setNewEmail(''); setEmailPw('')
+      setEmailMsg('Email updated.')
+    } catch { setEmailMsg('Network error'); setEmailErr(true) }
+    finally { setEmailSaving(false) }
+  }
+
+  // ── Change password ────────────────────────────────────────────────────────
+  const savePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    setPwMsg(''); setPwErr(false); setPwSaving(true)
+    try {
+      const r = await authFetch('/api/account/password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: curPw, new_password: newPw }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setPwMsg(d.detail ?? 'Failed'); setPwErr(true); return }
+      setCurPw(''); setNewPw('')
+      setPwMsg('Password updated.')
+      setProfile(p => p ? { ...p, has_password: true } : p)
+    } catch { setPwMsg('Network error'); setPwErr(true) }
+    finally { setPwSaving(false) }
+  }
+
+  // ── API key ────────────────────────────────────────────────────────────────
+  const saveApiKey = async () => {
+    if (!apiKeyInput.trim()) { setApiKeyMsg('Enter a key first.'); setApiKeyErr(true); return }
+    setApiKeyMsg(''); setApiKeyErr(false); setApiKeySaving(true)
+    try {
+      const r = await authFetch('/api/account/apikey', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: apiKeyInput.trim() }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setApiKeyMsg(d.detail ?? 'Failed'); setApiKeyErr(true); return }
+      setApiKeyHasKey(true)
+      setApiKeyPreview(d.preview)
+      setApiKeyInput('')
+      setApiKeyMsg('Key saved.')
+    } catch { setApiKeyMsg('Network error'); setApiKeyErr(true) }
+    finally { setApiKeySaving(false) }
+  }
+
+  const removeApiKey = async () => {
+    setApiKeyMsg(''); setApiKeyErr(false); setApiKeySaving(true)
+    try {
+      await authFetch('/api/account/apikey', { method: 'DELETE' })
+      setApiKeyHasKey(false)
+      setApiKeyPreview('')
+      setApiKeyInput('')
+      setApiKeyMsg('Key removed.')
+    } catch { setApiKeyMsg('Network error'); setApiKeyErr(true) }
+    finally { setApiKeySaving(false) }
+  }
+
+  // ── Delete account ─────────────────────────────────────────────────────────
+  const deleteAccount = async () => {
+    if (deleteConfirm !== 'DELETE') {
+      setDeleteMsg('Type DELETE to confirm.'); return
+    }
+    setDeleting(true)
+    try {
+      const r = await authFetch('/api/account', { method: 'DELETE' })
+      if (!r.ok) {
+        const d = await r.json()
+        setDeleteMsg(d.detail ?? 'Failed to delete account')
+        return
+      }
+      logout()
+      navigate('/login', { replace: true })
+    } catch { setDeleteMsg('Network error') }
+    finally { setDeleting(false) }
+  }
+
+  const cardStyle = {
+    background: 'var(--c-surface-2)',
+    borderColor: 'var(--c-border)',
+  }
+
+  return (
+    <div
+      className="w-full h-full flex flex-col overflow-hidden font-mono"
+      style={{ background: 'var(--c-bg)', color: 'var(--c-text-1)' }}
+    >
+      {/* ── Top bar ── */}
+      <div
+        className="flex items-center gap-3 px-4 py-2 shrink-0 border-b"
+        style={{ background: 'var(--c-surface-1)', borderColor: 'var(--c-border)' }}
+      >
+        <button
+          onClick={() => navigate(-1)}
+          className="text-xs px-2 py-1 rounded transition-colors"
+          style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-3)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
+        >
+          ← Back
+        </button>
+        <span className="text-[var(--c-accent)] font-bold tracking-widest text-xs uppercase">TASKMESH</span>
+        <span className="text-[var(--c-text-4)] text-xs">›</span>
+        <span className="text-[var(--c-text-1)] text-xs">Account</span>
+      </div>
+
+      {loading && (
+        <p className="px-6 py-8 text-xs" style={{ color: 'var(--c-text-4)' }}>Loading…</p>
+      )}
+
+      {!loading && profile && (
+        <div className="flex-1 overflow-y-auto px-6 py-8" style={{ maxWidth: 560 }}>
+
+          {/* ── Profile ── */}
+          <SectionHeader title="Profile" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <p className="text-[10px] mb-3" style={{ color: 'var(--c-text-4)' }}>
+              {profile.email}
+              {profile.created_at && (
+                <span className="ml-2">
+                  · Member since {new Date(profile.created_at).toLocaleDateString()}
+                </span>
+              )}
+            </p>
+            <form onSubmit={saveName} className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="block text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>
+                  Display name
+                </label>
+                <input
+                  className={inputCls}
+                  style={inputStyle}
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Your name"
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={nameSaving}
+                className="text-xs px-3 py-2 rounded font-bold disabled:opacity-50 shrink-0"
+                style={{ background: 'var(--c-accent)', color: '#000' }}
+              >
+                {nameSaving ? '…' : 'Save'}
+              </button>
+            </form>
+            <StatusMsg msg={nameMsg} isError={nameErr} />
+          </div>
+
+          {/* ── Change email ── */}
+          <SectionHeader title="Email address" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <p className="text-xs mb-3" style={{ color: 'var(--c-text-2)' }}>
+              Current: <span style={{ color: 'var(--c-text-1)' }}>{profile.email}</span>
+            </p>
+            {!profile.has_password && (
+              <p className="text-[10px] mb-3" style={{ color: 'var(--c-text-4)' }}>
+                Set a password first to change your email via this form.
+              </p>
+            )}
+            {profile.has_password && (
+              <form onSubmit={saveEmail} className="space-y-3">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>New email</label>
+                  <input type="email" required className={inputCls} style={inputStyle}
+                    value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="new@example.com" />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>Confirm with password</label>
+                  <input type="password" required className={inputCls} style={inputStyle}
+                    value={emailPw} onChange={e => setEmailPw(e.target.value)} placeholder="Current password" />
+                </div>
+                <button type="submit" disabled={emailSaving}
+                  className="text-xs px-3 py-2 rounded font-bold disabled:opacity-50"
+                  style={{ background: 'var(--c-accent)', color: '#000' }}>
+                  {emailSaving ? 'Saving…' : 'Update email'}
+                </button>
+              </form>
+            )}
+            <StatusMsg msg={emailMsg} isError={emailErr} />
+          </div>
+
+          {/* ── Password ── */}
+          <SectionHeader title="Security" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <p className="text-xs mb-3" style={{ color: 'var(--c-text-2)' }}>
+              {profile.has_password ? 'Change your password.' : 'Set a password to enable email/password login.'}
+            </p>
+            <form onSubmit={savePassword} className="space-y-3">
+              {profile.has_password && (
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>Current password</label>
+                  <input type="password" required className={inputCls} style={inputStyle}
+                    value={curPw} onChange={e => setCurPw(e.target.value)} placeholder="••••••••" />
+                </div>
+              )}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>
+                  {profile.has_password ? 'New password' : 'Password'}
+                </label>
+                <input type="password" required minLength={8} className={inputCls} style={inputStyle}
+                  value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min. 8 characters" />
+              </div>
+              <button type="submit" disabled={pwSaving}
+                className="text-xs px-3 py-2 rounded font-bold disabled:opacity-50"
+                style={{ background: 'var(--c-accent)', color: '#000' }}>
+                {pwSaving ? 'Saving…' : (profile.has_password ? 'Change password' : 'Set password')}
+              </button>
+            </form>
+            <StatusMsg msg={pwMsg} isError={pwErr} />
+          </div>
+
+          {/* ── Provider API key ── */}
+          <SectionHeader title="Provider API key" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <p className="text-xs mb-1" style={{ color: 'var(--c-text-2)' }}>
+              Your personal <span style={{ color: 'var(--c-text-1)' }}>OpenCode Go</span> API key.
+              Used instead of the server key when running agents.
+            </p>
+            <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-4)' }}>
+              Get yours at{' '}
+              <a href="https://opencode.ai/zen" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--c-accent)', textDecoration: 'underline' }}>
+                opencode.ai/zen
+              </a>
+              {' '}→ Go → copy API key.
+              {' '}In the future this will be configured automatically.
+            </p>
+
+            {/* Current status */}
+            <div className="flex items-center gap-2 mb-3">
+              <span
+                className="text-[10px] px-2 py-0.5 rounded"
+                style={apiKeyHasKey
+                  ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
+                  : { color: 'var(--c-text-4)', border: '1px solid var(--c-border)' }
+                }
+              >
+                {apiKeyHasKey ? `✓ Key set (${apiKeyPreview})` : 'No key configured — using server key'}
+              </span>
+            </div>
+
+            {/* Input + actions */}
+            <div className="flex gap-2 items-center">
+              <div className="relative flex-1">
+                <input
+                  className={inputCls + ' pr-8'}
+                  style={inputStyle}
+                  type={apiKeyShow ? 'text' : 'password'}
+                  value={apiKeyInput}
+                  onChange={e => setApiKeyInput(e.target.value)}
+                  placeholder={apiKeyHasKey ? 'Enter new key to replace…' : 'Paste your OpenCode Go key…'}
+                  onKeyDown={e => { if (e.key === 'Enter') saveApiKey() }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setApiKeyShow(v => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px]"
+                  style={{ color: 'var(--c-text-4)' }}
+                  tabIndex={-1}
+                  title={apiKeyShow ? 'Hide' : 'Show'}
+                >
+                  {apiKeyShow ? '🙈' : '👁'}
+                </button>
+              </div>
+              <button
+                onClick={saveApiKey}
+                disabled={apiKeySaving || !apiKeyInput.trim()}
+                className="text-xs px-3 py-2 rounded font-bold disabled:opacity-40 shrink-0"
+                style={{ background: 'var(--c-accent)', color: '#000' }}
+              >
+                {apiKeySaving ? '…' : 'Save'}
+              </button>
+              {apiKeyHasKey && (
+                <button
+                  onClick={removeApiKey}
+                  disabled={apiKeySaving}
+                  className="text-xs px-3 py-2 rounded disabled:opacity-40 shrink-0"
+                  style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-3)' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <StatusMsg msg={apiKeyMsg} isError={apiKeyErr} />
+          </div>
+
+          {/* ── Connected accounts ── */}
+          <SectionHeader title="Connected accounts" />
+          <div className="rounded border px-5 py-4 mb-1 space-y-3" style={cardStyle}>
+            {/* Google */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
+                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                </svg>
+                <span style={{ color: 'var(--c-text-1)' }}>Google</span>
+              </div>
+              <span
+                className="text-[10px] px-2 py-0.5 rounded"
+                style={profile.google_linked
+                  ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
+                  : { color: 'var(--c-text-4)' }
+                }
+              >
+                {profile.google_linked ? 'Connected' : 'Not connected'}
+              </span>
+            </div>
+
+            {/* GitHub */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="shrink-0" style={{ color: 'var(--c-text-2)' }}>
+                  <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+                </svg>
+                <span style={{ color: 'var(--c-text-1)' }}>GitHub</span>
+                {profile.github_login && (
+                  <span style={{ color: 'var(--c-text-4)' }}>@{profile.github_login}</span>
+                )}
+              </div>
+              <span
+                className="text-[10px] px-2 py-0.5 rounded"
+                style={profile.github_linked
+                  ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
+                  : { color: 'var(--c-text-4)' }
+                }
+              >
+                {profile.github_linked ? 'Connected' : 'Not connected'}
+              </span>
+            </div>
+          </div>
+
+          {/* ── Sign out ── */}
+          <SectionHeader title="Session" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <button
+              onClick={() => { logout(); navigate('/login', { replace: true }) }}
+              className="text-xs px-3 py-2 rounded font-bold transition-colors"
+              style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-2)')}
+            >
+              Sign out
+            </button>
+          </div>
+
+          {/* ── Danger zone ── */}
+          <SectionHeader title="Danger zone" />
+          <div
+            className="rounded border px-5 py-4"
+            style={{ ...cardStyle, borderColor: 'rgba(239,68,68,0.3)' }}
+          >
+            <p className="text-xs mb-3" style={{ color: 'var(--c-text-2)' }}>
+              Permanently delete your account and all data. This cannot be undone.
+            </p>
+            <div className="flex gap-2 items-center">
+              <input
+                className={inputCls + ' max-w-[160px]'}
+                style={{ ...inputStyle, borderColor: 'rgba(239,68,68,0.4)' }}
+                value={deleteConfirm}
+                onChange={e => setDeleteConfirm(e.target.value)}
+                placeholder='Type DELETE'
+              />
+              <button
+                onClick={deleteAccount}
+                disabled={deleting || deleteConfirm !== 'DELETE'}
+                className="text-xs px-3 py-2 rounded font-bold disabled:opacity-40"
+                style={{ border: '1px solid rgba(239,68,68,0.5)', color: '#ef4444' }}
+                onMouseEnter={e => { if (deleteConfirm === 'DELETE') (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.1)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+              >
+                {deleting ? 'Deleting…' : 'Delete account'}
+              </button>
+            </div>
+            <StatusMsg msg={deleteMsg} isError />
+          </div>
+
+        </div>
+      )}
+    </div>
+  )
+}
