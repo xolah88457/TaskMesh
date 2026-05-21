@@ -10,10 +10,13 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ..auth.auth import require_auth
-from ..core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER, save_config, get_project_dir
+from ..core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER, save_config, get_project_dir, load_config
+from ..core.orchestrator import Orchestrator
 
 router = APIRouter()
-_orchestrator = None
+_orchestrators: dict[str, Orchestrator] = {}  # user_id → per-user orchestrator
+_sio = None                                   # set by _init_sio() from main.py
+_default_config = load_config()               # shared readonly default for connect handler
 
 _AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "").lower() in ("1", "true", "yes")
 
@@ -22,8 +25,25 @@ _upload_tokens: dict[str, dict] = {}
 
 
 def set_orchestrator(orch):
-    global _orchestrator
-    _orchestrator = orch
+    """Legacy — no longer used by main.py. Kept for test compatibility."""
+    pass
+
+
+def _init_sio(sio_instance):
+    global _sio
+    _sio = sio_instance
+
+
+def get_default_config():
+    return _default_config
+
+
+def get_orchestrators() -> dict[str, Orchestrator]:
+    return _orchestrators
+
+
+def _orchestrator_done(user_id: str):
+    _orchestrators.pop(user_id, None)
 
 
 class ProjectBrief(BaseModel):
@@ -80,12 +100,12 @@ async def upload_files(body: UploadRequest, user: dict = Depends(require_auth)):
 
 @router.post("/start-project")
 async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
-    if _orchestrator is None:
-        return {"error": "orchestrator not ready"}
-    if _orchestrator.is_running():
-        return {"error": "already running"}
-
     user_id = user.get("sub", "anonymous")
+
+    # Check if user already has a running orchestrator
+    existing = _orchestrators.get(user_id)
+    if existing is not None and existing.is_running():
+        return {"error": "already running"}
 
     # Resolve upload token
     upload_dir = ""
@@ -96,41 +116,51 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
 
     # Dev bypass — skip billing gate entirely in local dev mode
     if _AUTH_DISABLED or user_id == "dev-user":
-        asyncio.create_task(
-            _orchestrator.run(body.brief, user_id=user_id, agent_limit=None, plan="pro",
-                              upload_dir=upload_dir)
-        )
-        return {"status": "started"}
+        plan = "pro"
+        agent_limit = None
+    else:
+        # Billing gate
+        from ..db.session import get_session
+        from ..db.models import UserCredits
+        plan    = "none"
+        balance = 0
+        async with get_session() as session:
+            if session is not None:
+                credits  = await session.get(UserCredits, user_id)
+                plan     = credits.plan          if credits else "none"
+                balance  = credits.balance_cents if credits else 0
 
-    # Billing gate
-    from ..db.session import get_session
-    from ..db.models import UserCredits
-    plan    = "none"
-    balance = 0
-    async with get_session() as session:
-        if session is not None:
-            credits  = await session.get(UserCredits, user_id)
-            plan     = credits.plan          if credits else "none"
-            balance  = credits.balance_cents if credits else 0
+        if plan == "none":
+            return {"error": "no_subscription"}
+        if balance <= 0:
+            return {"error": "no_credits"}
+        agent_limit = 3 if plan == "starter" else None
 
-    if plan == "none":
-        return {"error": "no_subscription"}
-    if balance <= 0:
-        return {"error": "no_credits"}
-
-    agent_limit = 3 if plan == "starter" else None
-    asyncio.create_task(
-        _orchestrator.run(body.brief, user_id=user_id, agent_limit=agent_limit, plan=plan,
-                          api_key="", upload_dir=upload_dir)
+    # Create a fresh orchestrator for this user
+    run_id = str(uuid.uuid4())
+    room = f"user:{user_id}"
+    orch = Orchestrator(
+        sio=_sio,
+        config=_default_config,
+        room=room,
+        on_done=_orchestrator_done,
     )
-    return {"status": "started"}
+    _orchestrators[user_id] = orch
+
+    asyncio.create_task(
+        orch.run(body.brief, user_id=user_id, agent_limit=agent_limit, plan=plan,
+                 api_key="", upload_dir=upload_dir, run_id=run_id)
+    )
+    return {"status": "started", "run_id": run_id}
 
 
 @router.post("/cancel")
-async def cancel_project(_user: dict = Depends(require_auth)):
-    if _orchestrator is None:
-        return {"error": "orchestrator not ready"}
-    _orchestrator.cancel()
+async def cancel_project(user: dict = Depends(require_auth)):
+    user_id = user.get("sub", "anonymous")
+    orch = _orchestrators.get(user_id)
+    if orch is None:
+        return {"status": "idle"}
+    orch.cancel()
     return {"status": "cancelling"}
 
 

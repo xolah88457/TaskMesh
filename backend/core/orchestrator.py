@@ -21,6 +21,7 @@ import asyncio
 import json
 import re
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -184,7 +185,13 @@ def _truncate(s: str, n: int = 100) -> str:
 # ─── orchestrator ─────────────────────────────────────────────────────────────
 
 class Orchestrator:
-    def __init__(self, sio: socketio.AsyncServer, config: ProjectConfig):
+    def __init__(
+        self,
+        sio: socketio.AsyncServer,
+        config: ProjectConfig,
+        room: str = "",
+        on_done: "Callable[[str], None] | None" = None,
+    ):
         self.sio = sio
         self.config = config
         self._cwd = get_project_dir()
@@ -192,6 +199,8 @@ class Orchestrator:
         self._file_poll_task: asyncio.Task | None = None
         self._run_task: asyncio.Task | None = None
         self._cancel_requested: bool = False
+        self._room = room                    # Socket.IO room name (e.g. "user:{id}")
+        self._on_done = on_done             # callback(user_id) on run end
 
         # coordination state — cleared at start of each run
         self._file_locks   = FileLockRegistry()
@@ -247,29 +256,29 @@ class Orchestrator:
     # ── emit helpers ───────────────────────────────────────────────────────────
 
     async def _emit_agent(self, agent_id: str, status: str) -> None:
-        await self.sio.emit("agent_update", {"agentId": agent_id, "status": status})
+        await self.sio.emit("agent_update", {"agentId": agent_id, "status": status}, room=self._room)
 
     async def _emit_log(self, agent_id: str, message: str) -> None:
         await self.sio.emit("log_update", {
             "time":    _now(),
             "agentId": agent_id,
             "message": _truncate(message),
-        })
+        }, room=self._room)
 
     async def _emit_task_done(self, task_id: str) -> None:
-        await self.sio.emit("task_update", {"taskId": task_id})
+        await self.sio.emit("task_update", {"taskId": task_id}, room=self._room)
 
     async def _emit_terminal(self, line: str) -> None:
-        await self.sio.emit("terminal_line", {"line": _truncate(line, 120)})
+        await self.sio.emit("terminal_line", {"line": _truncate(line, 120)}, room=self._room)
 
     async def _emit_files(self, count: int, filenames: list) -> None:
-        await self.sio.emit("file_update", {"count": count, "files": filenames})
+        await self.sio.emit("file_update", {"count": count, "files": filenames}, room=self._room)
 
     async def _emit_coordinator_log(self, entry: dict) -> None:
-        await self.sio.emit("coordinator_log", {"entry": entry})
+        await self.sio.emit("coordinator_log", {"entry": entry}, room=self._room)
 
     async def _emit_mailbox_msg(self, msg: dict) -> None:
-        await self.sio.emit("mailbox_msg", msg)
+        await self.sio.emit("mailbox_msg", msg, room=self._room)
 
     async def _bus_send(self, sender: str, recipient: str, content: str, msg_type: str = "message") -> None:
         """Send a cross-agent message: logs it, stores it in mailbox, emits to frontend."""
@@ -393,13 +402,13 @@ class Orchestrator:
                     "path": rel_path,
                     "requestingAgent": agent_id,
                     "holdingAgent": holder,
-                })
+                }, room=self._room)
                 await self._clog("file_conflict", f"{agent_id} overwrote {rel_path} (was {holder})", {
                     "path": rel_path, "winner": agent_id, "loser": holder or "",
                 })
                 self._file_locks.force_acquire(rel_path, agent_id)
             else:
-                await self.sio.emit("file_locked", {"path": rel_path, "agentId": agent_id})
+                await self.sio.emit("file_locked", {"path": rel_path, "agentId": agent_id}, room=self._room)
 
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
@@ -419,7 +428,7 @@ class Orchestrator:
         # Release locks now that writing is done
         for path in written:
             self._file_locks.release(path, agent_id)
-            await self.sio.emit("file_unlocked", {"path": path, "agentId": agent_id})
+            await self.sio.emit("file_unlocked", {"path": path, "agentId": agent_id}, room=self._room)
 
         return written
 
@@ -467,6 +476,7 @@ class Orchestrator:
         plan: str = "pro",
         api_key: str = "",
         upload_dir: str = "",
+        run_id: str = "",
     ) -> None:
         self._run_task = asyncio.current_task()
         self._current_user_id = user_id
@@ -474,9 +484,9 @@ class Orchestrator:
         self._plan            = plan
         self._api_key         = api_key
         self._upload_dir      = upload_dir
+        self._run_id          = run_id or str(uuid.uuid4())
+        run_id                = self._run_id
         cancelled = False
-        run_id    = str(uuid.uuid4())
-        self._run_id          = run_id
         year_month = datetime.now(timezone.utc).strftime("%Y-%m")
 
         # Clear per-run coordination state
@@ -526,7 +536,7 @@ class Orchestrator:
                 "project": self.config.project,
                 "sprint":  self.config.sprint,
                 "agents":  self.config.agents,
-            })
+            }, room=self._room)
 
             count, files = await self._git_status()
             await self._emit_files(count, files)
@@ -555,7 +565,7 @@ class Orchestrator:
                         run_row.status = final_status
                         run_row.finished_at = datetime.now(timezone.utc)
 
-            await self.sio.emit("run_done", {})
+            await self.sio.emit("run_done", {}, room=self._room)
 
         except asyncio.CancelledError:
             self._stop_file_polling()
@@ -565,7 +575,7 @@ class Orchestrator:
                     if run_row is not None:
                         run_row.status = "cancelled"
                         run_row.finished_at = datetime.now(timezone.utc)
-            await self.sio.emit("run_done", {})
+            await self.sio.emit("run_done", {}, room=self._room)
 
         except Exception as e:
             self._stop_file_polling()
@@ -576,11 +586,13 @@ class Orchestrator:
                         run_row.status = "error"
                         run_row.finished_at = datetime.now(timezone.utc)
             await self._emit_terminal(f"[error] {e}")
-            await self.sio.emit("run_done", {})
+            await self.sio.emit("run_done", {}, room=self._room)
 
         finally:
             self._run_task = None
             self._file_locks.clear()
+            if self._on_done is not None:
+                self._on_done(user_id)
 
     # ── pipeline ───────────────────────────────────────────────────────────────
 
@@ -605,7 +617,7 @@ class Orchestrator:
         if agent_limit is not None and len(agent_ids) > agent_limit:
             agent_ids = agent_ids[:agent_limit]
 
-        await self.sio.emit("agents_selected", {"agentIds": agent_ids})
+        await self.sio.emit("agents_selected", {"agentIds": agent_ids}, room=self._room)
         await self._emit_log("manager", f"Team: {', '.join(agent_ids)}.")
 
         # ── Phase 1: Manager creates the task plan ─────────────────────────────
@@ -673,7 +685,7 @@ class Orchestrator:
         await self._emit_log("manager", _truncate(analysis))
 
         if feature:
-            await self.sio.emit("feature_set", {"feature": feature})
+            await self.sio.emit("feature_set", {"feature": feature}, room=self._room)
             await self._emit_log("manager", f"Operation: {feature}")
 
         # Dispatch tasks to SharedTaskList
@@ -687,7 +699,7 @@ class Orchestrator:
                     created_by="manager",
                     status="available",
                 )
-            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()})
+            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()}, room=self._room)
             await self._clog("task_created", f"Created {len(tasks)} tasks: {[t.get('title','') for t in tasks]}")
         else:
             # Fallback: create a single task if no tasks from manager
@@ -697,7 +709,7 @@ class Orchestrator:
                 created_by="manager",
                 status="available",
             )
-            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()})
+            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()}, room=self._room)
 
         await self._emit_agent("manager", "done")
         await self._emit_log("manager", f"Task plan ready — {len(self._task_list.all_tasks())} tasks.")
@@ -727,7 +739,7 @@ class Orchestrator:
             await self._emit_files(count, files)
 
             # Emit task list updates
-            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()})
+            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()}, room=self._room)
 
             # Persist task list
             self._task_list.save_to_disk(run_id, self._cwd)

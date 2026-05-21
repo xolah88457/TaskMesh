@@ -11,9 +11,9 @@ import socketio  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from .core.config_loader import load_config  # noqa: E402
-from .core.orchestrator import Orchestrator  # noqa: E402
-from .api.routes import router, set_orchestrator  # noqa: E402
+from .auth.auth import decode_token  # noqa: E402
+from .core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER  # noqa: E402
+from .api.routes import router, get_default_config, get_orchestrators, _init_sio  # noqa: E402
 from .api.billing import router as billing_router  # noqa: E402
 from .api.github import router as github_router  # noqa: E402
 from .api.auth import router as auth_router  # noqa: E402
@@ -29,12 +29,16 @@ _CORS_ORIGINS: list[str] | str = (
 )
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=_CORS_ORIGINS)
+_init_sio(sio)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_tables()
     yield
+    # Cancel any active orchestrators on shutdown
+    for user_id, orch in list(get_orchestrators().items()):
+        orch.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -51,9 +55,7 @@ app.include_router(github_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(account_router, prefix="/api")
 
-orchestrator = Orchestrator(sio, load_config())
-set_orchestrator(orchestrator)
-
+_default_config = get_default_config()
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 
@@ -61,10 +63,28 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 async def connect(sid, environ):
     print(f"Client connected: {sid}")
     await sio.emit("init", {
-        "project": orchestrator.config.project,
-        "sprint":  orchestrator.config.sprint,
-        "agents":  orchestrator.config.agents,
+        "project": _default_config.project,
+        "sprint":  _default_config.sprint,
+        "agents":  _default_config.agents,
     }, to=sid)
+
+
+@sio.event
+async def auth(sid, data):
+    """Authenticate a socket connection via JWT and enter the user's room."""
+    token = data.get("token", "") if isinstance(data, dict) else ""
+    if not token:
+        return {"ok": False, "error": "missing token"}
+    try:
+        payload = decode_token(token)
+        user_id = payload.get("sub", "")
+        if not user_id:
+            return {"ok": False, "error": "invalid token payload"}
+        room = f"user:{user_id}"
+        sio.enter_room(sid, room)
+        return {"ok": True, "room": room}
+    except Exception:
+        return {"ok": False, "error": "invalid token"}
 
 
 @sio.event

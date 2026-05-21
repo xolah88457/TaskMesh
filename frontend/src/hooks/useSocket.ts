@@ -4,6 +4,7 @@ import type {
   ProjectState, Agent, Task, LogEntry, NetMessage,
   ReviewerResult, CoordLogEntry, MailboxMessage,
 } from '../types'
+import { useAuthContext } from '../context/auth'
 import { useAuthFetch } from './useAuthFetch'
 
 const INITIAL: ProjectState = {
@@ -183,10 +184,20 @@ export function useSocket() {
   const [state, dispatch] = useReducer(reducer, INITIAL)
   const socketRef = useRef<Socket | null>(null)
   const authFetch = useAuthFetch()
+  const { getToken } = useAuthContext()
 
   useEffect(() => {
-    const socket = io({ path: '/socket.io', transports: ['websocket', 'polling'] })
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || undefined
+    const socket = io(SOCKET_URL, { path: '/socket.io', transports: ['websocket', 'polling'] })
     socketRef.current = socket
+
+    // Authenticate the socket so the backend joins this connection to the user's room.
+    // Room-scoping ensures each user only receives events from their own runs.
+    getToken().then(token => {
+      if (token && token !== 'dev-token') {
+        socket.emit('auth', { token })
+      }
+    }).catch(() => {})
 
     socket.on('init', ({ project, sprint, agents }: { project: string; sprint: string; agents: Agent[] }) =>
       dispatch({ type: 'INIT', project, sprint, agents }))
