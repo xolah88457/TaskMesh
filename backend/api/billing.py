@@ -81,38 +81,103 @@ def _build_pack_credits() -> dict[str, int]:
     return m
 
 # ── Model pricing table — cents per 1 000 tokens (prompt, completion) ─────────
-# Rates are estimated market equivalents used to charge our users.
-# OpenCode Go is a flat subscription for us, but we still bill users per-token.
+# User-provided $/M rates are converted: cents/1K = ($/M * 100) / 1000
 MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # Flagship (Pro tier)
+    # ── Existing Flagship (unchanged) ──────────────────────────────────────
     "deepseek-v4-pro":   (0.014, 0.028),
     "glm-5.1":           (0.010, 0.020),
     "kimi-k2.6":         (0.014, 0.028),
     "mimo-v2.5-pro":     (0.012, 0.024),
     "minimax-m2.7":      (0.014, 0.028),
     "qwen3.6-plus":      (0.006, 0.012),
-    # Balanced
-    "deepseek-v4-flash": (0.007, 0.014),
+    # ── Existing Balanced (partially updated) ──────────────────────────────
+    "deepseek-v4-flash": (0.174, 0.348),   # updated: $1.74/M in, $3.48/M out
     "glm-5":             (0.008, 0.016),
     "kimi-k2.5":         (0.010, 0.020),
     "mimo-v2.5":         (0.008, 0.016),
-    "minimax-m2.5":      (0.008, 0.016),
+    "minimax-m2.5":      (0.030, 0.240),   # updated: $0.30/M in, $2.40/M out
     "qwen3.5-plus":      (0.004, 0.008),
-    # Fast
-    "nemotron-3-super":  (0.004, 0.008),
+    # ── Existing Fast (updated) ────────────────────────────────────────────
+    "nemotron-3-super":  (0.010, 0.050),   # updated: $0.10/M in, $0.50/M out
+    # ── Budget / Economy variants ──────────────────────────────────────────
+    "deepseek-v4-flash-free": (0.174, 0.348),
+    "big-pickle":             (0.010, 0.050),
+    "nemotron-3-super-free":  (0.010, 0.050),
+    "minimax-m2.5-free":      (0.030, 0.240),
+    # ── Claude (Anthropic) — OpenCode Zen pricing ──────────────────────────
+    "claude-haiku-4-5":  (0.100, 0.500),   # ~$1/M in, $5/M out
+    "claude-opus-4-1":   (1.500, 7.500),   # ~$15/M in, $75/M out
+    "claude-opus-4-5":   (0.500, 2.500),   # ~$5/M in, $25/M out
+    "claude-opus-4-6":   (0.500, 2.500),
+    "claude-opus-4-7":   (0.500, 2.500),
+    "claude-sonnet-4":   (0.300, 1.500),   # ~$3/M in, $15/M out
+    "claude-sonnet-4-5": (0.300, 1.500),
+    "claude-sonnet-4-6": (0.300, 1.500),
+    # ── GPT (OpenAI) — OpenCode Zen pricing estimates ──────────────────────
+    "gpt-5":             (0.250, 1.000),   # ~$2.50/M in, $10/M out
+    "gpt-5-codex":       (0.300, 1.200),
+    "gpt-5-nano":        (0.025, 0.100),   # ~$0.25/M in, $1/M out
+    "gpt-5.1":           (0.250, 1.000),
+    "gpt-5.1-codex":     (0.300, 1.200),
+    "gpt-5.1-codex-max": (0.300, 1.200),
+    "gpt-5.1-codex-mini":(0.100, 0.400),
+    "gpt-5.2":           (0.250, 1.000),
+    "gpt-5.2-codex":     (0.300, 1.200),
+    "gpt-5.3-codex":     (0.300, 1.200),
+    "gpt-5.3-codex-spark":(0.100, 0.400),
+    "gpt-5.4":           (0.250, 1.000),
+    "gpt-5.4-mini":      (0.050, 0.200),
+    "gpt-5.4-nano":      (0.025, 0.100),
+    "gpt-5.4-pro":       (0.500, 2.000),   # ~$5/M in, $20/M out
+    "gpt-5.5":           (0.250, 1.000),
+    "gpt-5.5-pro":       (0.500, 2.000),
+    # ── Gemini (Google) — OpenCode Zen pricing estimates ───────────────────
+    "gemini-3-flash":    (0.015, 0.060),   # ~$0.15/M in, $0.60/M out
+    "gemini-3.1-pro":    (0.350, 1.400),   # ~$3.50/M in, $14/M out
+    "gemini-3.5-flash":  (0.015, 0.060),
+    # ── Other ──────────────────────────────────────────────────────────────
+    "grok-build-0-1":    (0.0005, 0.0010), # unconfirmed estimate
 }
 DEFAULT_PRICING: tuple[float, float] = (0.020, 0.020)  # fallback for unknown models
 
 # ── Pro-only model IDs ─────────────────────────────────────────────────────────
 # Any agent using these models will be downgraded to STARTER_MODEL_FALLBACK
 # when the user's plan is "starter".
+# Threshold: prompt cost > 0.2 cents/1K tokens (~$2/M input).
 PRO_ONLY_MODELS: frozenset[str] = frozenset({
+    # Existing Flagship (6)
     "deepseek-v4-pro",
     "glm-5.1",
     "kimi-k2.6",
     "mimo-v2.5-pro",
     "minimax-m2.7",
     "qwen3.6-plus",
+    # Claude Opus (4)
+    "claude-opus-4-1",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-opus-4-7",
+    # Claude Sonnet (3)
+    "claude-sonnet-4",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    # GPT standard tier (3)
+    "gpt-5",
+    "gpt-5.1",
+    "gpt-5.2",
+    # GPT Codex (5)
+    "gpt-5-codex",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.2-codex",
+    "gpt-5.3-codex",
+    # GPT Pro / top-tier (4)
+    "gpt-5.4-pro",
+    "gpt-5.5-pro",
+    "gpt-5.5",
+    "gpt-5.4",
+    # Gemini Pro (1)
+    "gemini-3.1-pro",
 })
 
 STARTER_MODEL_FALLBACK = "deepseek-v4-flash"

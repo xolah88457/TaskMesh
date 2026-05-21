@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
 
 # ── OpenRouter (inactive — switch when ready) ──────────────────────────────────
 # When switching to OpenRouter:
@@ -28,7 +28,7 @@ DEFAULT_AGENTS = [
 ]
 
 DEFAULT_PROVIDER = {
-    "name": "OpenCode Go",
+    "name": "OpenCode Zen",
     "baseURL": DEFAULT_BASE_URL,
     "apiKey": "",
 }
@@ -36,7 +36,7 @@ DEFAULT_PROVIDER = {
 
 @dataclass
 class ProviderConfig:
-    name: str = "OpenCode Go"
+    name: str = "OpenCode Zen"
     baseURL: str = DEFAULT_BASE_URL
     apiKey: str = ""
 

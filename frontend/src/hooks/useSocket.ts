@@ -221,24 +221,10 @@ export function useSocket() {
     socket.on('run_done', () => dispatch({ type: 'DONE' }))
 
     // ── coordination events ───────────────────────────────────────────────────
-
-    socket.on('reviewer_started', () =>
-      dispatch({ type: 'REVIEWER_STARTED' }))
-
-    socket.on('reviewer_result', (result: ReviewerResult) =>
-      dispatch({ type: 'REVIEWER_RESULT', result }))
-
-    socket.on('reviewer_retry', ({ agents }: { agents: string[] }) => {
-      // Surface a log entry so the live activity shows the retry
-      dispatch({
-        type: 'LOG',
-        entry: {
-          time: new Date().toLocaleTimeString('en', { hour12: false, hour: '2-digit', minute: '2-digit' }),
-          agentId: 'reviewer',
-          message: `Retry requested for: ${agents.join(', ')}`,
-        },
-      })
-    })
+    // NOTE: reviewer_started / reviewer_result / reviewer_retry are reserved for a
+    // future Phase 4 reviewer gate. The orchestrator does not emit them yet; the
+    // reviewer agent runs as a regular executor today. Re-add the listeners here
+    // when the orchestrator gains a dedicated reviewer phase.
 
     socket.on('coordinator_log', ({ entry }: { entry: CoordLogEntry }) =>
       dispatch({ type: 'COORD_LOG', entry }))
@@ -270,11 +256,11 @@ export function useSocket() {
     return () => clearInterval(id)
   }, [state.running])
 
-  const startProject = (brief: string) => {
+  const startProject = (brief: string, uploadToken?: string) => {
     authFetch('/api/start-project', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ brief }),
+      body: JSON.stringify({ brief, ...(uploadToken ? { upload_token: uploadToken } : {}) }),
     })
       .then(r => r.json())
       .then(data => {

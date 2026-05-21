@@ -407,7 +407,7 @@ interface Config {
 
 const MODEL_GROUPS = [
   {
-    label: 'Flagship',
+    label: 'Flagship (Pro)',
     models: [
       { id: 'deepseek-v4-pro',   label: 'DeepSeek V4 Pro' },
       { id: 'glm-5.1',           label: 'GLM-5.1' },
@@ -415,6 +415,16 @@ const MODEL_GROUPS = [
       { id: 'mimo-v2.5-pro',     label: 'MiMo V2.5 Pro' },
       { id: 'minimax-m2.7',      label: 'MiniMax M2.7' },
       { id: 'qwen3.6-plus',      label: 'Qwen3.6 Plus' },
+      { id: 'claude-opus-4-1',   label: 'Claude Opus 4.1' },
+      { id: 'claude-opus-4-5',   label: 'Claude Opus 4.5' },
+      { id: 'claude-opus-4-6',   label: 'Claude Opus 4.6' },
+      { id: 'claude-opus-4-7',   label: 'Claude Opus 4.7' },
+      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+      { id: 'gpt-5.4-pro',       label: 'GPT-5.4 Pro' },
+      { id: 'gpt-5.5-pro',       label: 'GPT-5.5 Pro' },
+      { id: 'gpt-5.5',           label: 'GPT-5.5' },
+      { id: 'gpt-5.4',           label: 'GPT-5.4' },
+      { id: 'gemini-3.1-pro',    label: 'Gemini 3.1 Pro' },
     ],
   },
   {
@@ -426,12 +436,35 @@ const MODEL_GROUPS = [
       { id: 'mimo-v2.5',         label: 'MiMo V2.5' },
       { id: 'minimax-m2.5',      label: 'MiniMax M2.5' },
       { id: 'qwen3.5-plus',      label: 'Qwen3.5 Plus' },
+      { id: 'claude-sonnet-4',   label: 'Claude Sonnet 4' },
+      { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+      { id: 'claude-haiku-4-5',  label: 'Claude Haiku 4.5' },
+      { id: 'gpt-5',             label: 'GPT-5' },
+      { id: 'gpt-5.1',           label: 'GPT-5.1' },
+      { id: 'gpt-5.2',           label: 'GPT-5.2' },
+      { id: 'gpt-5-codex',       label: 'GPT-5 Codex' },
+      { id: 'gpt-5.1-codex',     label: 'GPT-5.1 Codex' },
+      { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max' },
+      { id: 'gpt-5.2-codex',     label: 'GPT-5.2 Codex' },
+      { id: 'gpt-5.3-codex',     label: 'GPT-5.3 Codex' },
+      { id: 'gpt-5.1-codex-mini',label: 'GPT-5.1 Codex Mini' },
+      { id: 'gpt-5.3-codex-spark',label:'GPT-5.3 Codex Spark' },
+      { id: 'gpt-5.4-mini',      label: 'GPT-5.4 Mini' },
+      { id: 'gemini-3-flash',    label: 'Gemini 3 Flash' },
+      { id: 'gemini-3.5-flash',  label: 'Gemini 3.5 Flash' },
     ],
   },
   {
-    label: 'Fast',
+    label: 'Budget',
     models: [
-      { id: 'nemotron-3-super',  label: 'Nemotron 3 Super' },
+      { id: 'nemotron-3-super',       label: 'Nemotron 3 Super' },
+      { id: 'deepseek-v4-flash-free', label: 'DeepSeek V4 Flash (Budget)' },
+      { id: 'big-pickle',             label: 'Big Pickle' },
+      { id: 'nemotron-3-super-free',  label: 'Nemotron 3 Super (Budget)' },
+      { id: 'minimax-m2.5-free',      label: 'MiniMax M2.5 (Budget)' },
+      { id: 'gpt-5-nano',             label: 'GPT-5 Nano' },
+      { id: 'gpt-5.4-nano',           label: 'GPT-5.4 Nano' },
+      { id: 'grok-build-0-1',         label: 'Grok Build 0-1' },
     ],
   },
 ]
@@ -444,25 +477,63 @@ interface Rec { temperature: number; top_p: number; top_k?: number; note?: strin
 
 const MODEL_RECOMMENDATIONS: Record<string, Rec> = {
   // ── DeepSeek ────────────────────────────────────────────────
-  'deepseek-v4-pro':  { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
-  'deepseek-v4-flash':{ temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
+  'deepseek-v4-pro':       { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
+  'deepseek-v4-flash':     { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
+  'deepseek-v4-flash-free':{ temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
   // ── GLM ─────────────────────────────────────────────────────
-  'glm-5.1':          { temperature: 0.7, top_p: 0.95 },
-  'glm-5':            { temperature: 0.7, top_p: 0.95 },
+  'glm-5.1':               { temperature: 0.7, top_p: 0.95 },
+  'glm-5':                 { temperature: 0.7, top_p: 0.95 },
   // ── Kimi ────────────────────────────────────────────────────
-  'kimi-k2.6':        { temperature: 0.6, top_p: 0.9 },
-  'kimi-k2.5':        { temperature: 0.6, top_p: 0.9 },
+  'kimi-k2.6':             { temperature: 0.6, top_p: 0.9 },
+  'kimi-k2.5':             { temperature: 0.6, top_p: 0.9 },
   // ── MiMo ────────────────────────────────────────────────────
-  'mimo-v2.5-pro':    { temperature: 0.7, top_p: 0.95 },
-  'mimo-v2.5':        { temperature: 0.7, top_p: 0.95 },
+  'mimo-v2.5-pro':         { temperature: 0.7, top_p: 0.95 },
+  'mimo-v2.5':             { temperature: 0.7, top_p: 0.95 },
   // ── MiniMax ─────────────────────────────────────────────────
-  'minimax-m2.7':     { temperature: 0.7, top_p: 0.9 },
-  'minimax-m2.5':     { temperature: 0.7, top_p: 0.9 },
+  'minimax-m2.7':          { temperature: 0.7, top_p: 0.9 },
+  'minimax-m2.5':          { temperature: 0.7, top_p: 0.9 },
+  'minimax-m2.5-free':     { temperature: 0.7, top_p: 0.9 },
   // ── Qwen ────────────────────────────────────────────────────
-  'qwen3.6-plus':     { temperature: 0.6, top_p: 0.95, top_k: 20 },
-  'qwen3.5-plus':     { temperature: 0.6, top_p: 0.95, top_k: 20 },
+  'qwen3.6-plus':          { temperature: 0.6, top_p: 0.95, top_k: 20 },
+  'qwen3.5-plus':          { temperature: 0.6, top_p: 0.95, top_k: 20 },
   // ── Nemotron ────────────────────────────────────────────────
-  'nemotron-3-super': { temperature: 0.6, top_p: 0.9 },
+  'nemotron-3-super':      { temperature: 0.6, top_p: 0.9 },
+  'nemotron-3-super-free': { temperature: 0.6, top_p: 0.9 },
+  // ── Big Pickle ──────────────────────────────────────────────
+  'big-pickle':            { temperature: 0.7, top_p: 0.95 },
+  // ── Claude ──────────────────────────────────────────────────
+  'claude-haiku-4-5':      { temperature: 0.7, top_p: 0.9 },
+  'claude-opus-4-1':       { temperature: 0.7, top_p: 0.9 },
+  'claude-opus-4-5':       { temperature: 0.7, top_p: 0.9 },
+  'claude-opus-4-6':       { temperature: 0.7, top_p: 0.9 },
+  'claude-opus-4-7':       { temperature: 0.7, top_p: 0.9 },
+  'claude-sonnet-4':       { temperature: 0.7, top_p: 0.9 },
+  'claude-sonnet-4-5':     { temperature: 0.7, top_p: 0.9 },
+  'claude-sonnet-4-6':     { temperature: 0.7, top_p: 0.9 },
+  // ── GPT ─────────────────────────────────────────────────────
+  'gpt-5':                 { temperature: 0.7, top_p: 1.0 },
+  'gpt-5-codex':           { temperature: 0.5, top_p: 0.9 },
+  'gpt-5-nano':            { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.1':               { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.1-codex':         { temperature: 0.5, top_p: 0.9 },
+  'gpt-5.1-codex-max':     { temperature: 0.5, top_p: 0.9 },
+  'gpt-5.1-codex-mini':    { temperature: 0.5, top_p: 0.9 },
+  'gpt-5.2':               { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.2-codex':         { temperature: 0.5, top_p: 0.9 },
+  'gpt-5.3-codex':         { temperature: 0.5, top_p: 0.9 },
+  'gpt-5.3-codex-spark':   { temperature: 0.5, top_p: 0.9 },
+  'gpt-5.4':               { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.4-mini':          { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.4-nano':          { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.4-pro':           { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.5':               { temperature: 0.7, top_p: 1.0 },
+  'gpt-5.5-pro':           { temperature: 0.5, top_p: 1.0 },
+  // ── Gemini ──────────────────────────────────────────────────
+  'gemini-3-flash':        { temperature: 1.0, top_p: 0.96, top_k: 64 },
+  'gemini-3.1-pro':        { temperature: 0.7, top_p: 0.95 },
+  'gemini-3.5-flash':      { temperature: 1.0, top_p: 0.96, top_k: 64 },
+  // ── Grok ────────────────────────────────────────────────────
+  'grok-build-0-1':        { temperature: 0.7, top_p: 0.95 },
 }
 
 function defaultAgent(presetId: string, model: string, overrides: Partial<AgentCfg> = {}): AgentCfg {
@@ -478,7 +549,7 @@ function defaultAgent(presetId: string, model: string, overrides: Partial<AgentC
 // Default config — manager only. Users add executors via +Add or Recommended Layout.
 const DEFAULT_CONFIG: Config = {
   sprint: 'Sprint #1',
-  provider: { name: 'OpenCode Go', baseURL: 'https://opencode.ai/zen/go/v1', apiKey: '' },
+  provider: { name: 'OpenCode Zen', baseURL: 'https://opencode.ai/zen/v1', apiKey: '' },
   agents: [
     defaultAgent('manager', 'deepseek-v4-pro'),
   ],
@@ -582,7 +653,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
       .then(r => r.json())
       .then(data => setCfg({
         sprint:   data.sprint   ?? 'Sprint #1',
-        provider: { name: 'OpenCode Go', baseURL: 'https://opencode.ai/zen/go/v1', ...data.provider },
+        provider: { name: 'OpenCode Zen', baseURL: 'https://opencode.ai/zen/v1', ...data.provider },
         agents:   (data.agents ?? []).map((a: AgentCfg) => {
           const preset = AGENT_PRESETS.find(p => p.id === a.id)
           return {
@@ -614,11 +685,11 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
     const usedIds = new Set(cfg.agents.map(a => a.id))
     const next = AGENT_PRESETS.find(p => p.id !== 'manager' && !usedIds.has(p.id))
     const newAgent: AgentCfg = next
-      ? defaultAgent(next.id, 'meta/llama-3.1-8b-instruct')
+      ? defaultAgent(next.id, 'deepseek-v4-flash')
       : {
           id: `agent${cfg.agents.length + 1}`,
           name: 'Agent', role: 'Specialist',
-          model: 'meta/llama-3.1-8b-instruct',
+          model: 'deepseek-v4-flash',
           temperature: 0.7, top_p: 0.9, top_k: 0, thinking_budget: 0,
           planner: false, color: '#6b7280', icon: '🤖', system_prompt: '',
         }
@@ -632,7 +703,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
     setRecMsg('')
     // Warn if no API key configured
     if (!cfg.provider.apiKey.trim()) {
-      setRecMsg('Warning: No API key is set. Agents will fail to run until a valid OpenCode Go or Zen key is provided.')
+      setRecMsg('Warning: No API key is set. Agents will fail to run until a valid OpenCode Zen key is provided.')
     }
     const newAgents = RECOMMENDED_LAYOUT.map(r => defaultAgent(r.roleId as AgentPreset['id'], r.model, {
       ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
@@ -767,7 +838,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
             </Section>
 
             {/* Provider API Key */}
-            <Section title="OpenCode API Key">
+            <Section title="OpenCode Zen API Key">
               <div className="space-y-1.5">
                 <div className="flex gap-1">
                   <input
@@ -776,7 +847,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
                     type={showKey ? 'text' : 'password'}
                     value={cfg.provider.apiKey}
                     onChange={e => updateProvider('apiKey', e.target.value)}
-                    placeholder="Paste your OpenCode Go or Zen API key…"
+                    placeholder="Paste your OpenCode Zen API key…"
                   />
                   <button
                     onClick={() => setShowKey(s => !s)}
@@ -785,7 +856,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
                   >{showKey ? 'hide' : 'show'}</button>
                 </div>
                 <p className="text-[9px] font-mono pl-0.5" style={{ color: 'var(--c-text-4)' }}>
-                  Supports OpenCode Go ($10/mo) and Zen plans — get yours at opencode.ai/zen
+                  Master Zen API key for all models — manage at opencode.ai/zen
                 </p>
               </div>
             </Section>
@@ -1010,6 +1081,9 @@ function AgentEditor({ agent, isManager, onUpdate, onApplyPreset, onRemove }: Ag
           </div>
           <div className="text-[9px] font-mono mt-0.5 truncate" style={{ color: 'var(--c-text-4)' }}>
             {KNOWN_MODELS.find(m => m.id === agent.model)?.label ?? agent.model}
+            {(agent.model.startsWith('gpt-') || agent.model.startsWith('claude-') || agent.model.startsWith('gemini-')) && (
+              <> <span style={{ color: 'var(--c-text-4)' }}>(expensive)</span></>
+            )}
           </div>
         </div>
 
@@ -1122,7 +1196,9 @@ function AgentEditor({ agent, isManager, onUpdate, onApplyPreset, onRemove }: Ag
                     {MODEL_GROUPS.map(group => (
                       <optgroup key={group.label} label={`── ${group.label} ──`}>
                         {group.models.map(m => (
-                          <option key={m.id} value={m.id}>{m.label}</option>
+                          <option key={m.id} value={m.id}>
+                            {m.label}{m.id.startsWith('gpt-') || m.id.startsWith('claude-') || m.id.startsWith('gemini-') ? ' (expensive)' : ''}
+                          </option>
                         ))}
                       </optgroup>
                     ))}
@@ -1240,12 +1316,24 @@ function AccountSettingsPanel({ user, authFetch }: Omit<AccountSettingsPanelProp
 
   const handleSaveEmail = async (e: React.FormEvent) => {
     e.preventDefault()
+    setPwError('')
     setSaving(true)
-    // TODO: wire to PATCH /api/auth/update-email
-    await new Promise(r => setTimeout(r, 600))
-    setSaveStatus('email')
-    setTimeout(() => setSaveStatus(''), 2000)
-    setSaving(false)
+    try {
+      const r = await authFetch('/api/account/email', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, password: currPw }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setPwError(d.detail ?? 'Update failed'); return }
+      setSaveStatus('email')
+      setCurrPw('')
+      setTimeout(() => setSaveStatus(''), 2000)
+    } catch {
+      setPwError('Network error')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleSavePassword = async (e: React.FormEvent) => {
@@ -1254,12 +1342,22 @@ function AccountSettingsPanel({ user, authFetch }: Omit<AccountSettingsPanelProp
     if (newPw !== confirmPw) { setPwError('Passwords do not match'); return }
     if (newPw.length < 8)    { setPwError('Must be at least 8 characters'); return }
     setSaving(true)
-    // TODO: wire to PATCH /api/auth/update-password
-    await new Promise(r => setTimeout(r, 600))
-    setSaveStatus('password')
-    setCurrPw(''); setNewPw(''); setConfirmPw('')
-    setTimeout(() => setSaveStatus(''), 2000)
-    setSaving(false)
+    try {
+      const r = await authFetch('/api/account/password', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ current_password: currPw, new_password: newPw }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setPwError(d.detail ?? 'Update failed'); return }
+      setSaveStatus('password')
+      setCurrPw(''); setNewPw(''); setConfirmPw('')
+      setTimeout(() => setSaveStatus(''), 2000)
+    } catch {
+      setPwError('Network error')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

@@ -10,7 +10,7 @@ Tables:
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, String, Integer, Text, Boolean, DateTime, ForeignKey, Index
+    Column, String, Integer, Text, DateTime, ForeignKey, Index
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -33,7 +33,6 @@ class User(Base):
     password_hash    = Column(Text, nullable=True)             # NULL for OAuth-only users
     google_id        = Column(String(128), unique=True, nullable=True)
     github_id        = Column(String(64),  unique=True, nullable=True)  # GitHub user ID for login
-    opencode_api_key = Column(String(256), nullable=True)     # OpenCode Go key (user-scoped)
     created_at       = Column(DateTime(timezone=True), nullable=False, default=_now)
 
     __table_args__ = (
@@ -115,3 +114,21 @@ class UserCredits(Base):
     balance_cents   = Column(Integer,     nullable=False, default=0)
     subscription_id = Column(String(128), nullable=True)     # Paddle subscription ID
     updated_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class ZenUsage(Base):
+    """Per-agent-call token usage log for analytics and spend tracking.
+
+    One row per agent.run() call. Cost is calculated at TaskMesh's
+    MODEL_PRICING rates (not Zen's underlying provider cost).
+    """
+    __tablename__ = "zen_usage"
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    user_id           = Column(String(128), nullable=False, index=True)
+    run_id            = Column(String(36),  nullable=False)
+    model             = Column(String(64),  nullable=False)
+    prompt_tokens     = Column(Integer,     nullable=False, default=0)
+    completion_tokens = Column(Integer,     nullable=False, default=0)
+    cost_cents        = Column(Integer,     nullable=False, default=0)
+    created_at        = Column(DateTime(timezone=True), nullable=False, default=_now)

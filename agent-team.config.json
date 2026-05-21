@@ -1,8 +1,8 @@
 {
   "sprint": "Test #2",
   "provider": {
-    "name": "OpenCode Go",
-    "baseURL": "https://opencode.ai/zen/go/v1",
+    "name": "OpenCode Zen",
+    "baseURL": "https://opencode.ai/zen/v1",
     "apiKey": ""
   },
   "agents": [

@@ -19,7 +19,7 @@ const PLANS = [
     features: [
       'Up to 3 agents per run',
       '$15 API credits / month',
-      'All standard models',
+      'All Balanced & Budget models',
       'File output to disk',
       'Run history + downloads',
       'Unlimited runs (credit permitting)',

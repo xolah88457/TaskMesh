@@ -49,14 +49,15 @@ Do NOT write code. Do NOT deviate from this JSON structure."""
 
 
 class ManagerAgent(BaseAgent):
-    def __init__(self, agents: list, base_url: str = "https://integrate.api.nvidia.com/v1", api_key: str = ""):
+    def __init__(self, agents: list, base_url: str = "https://opencode.ai/zen/v1", api_key: str = ""):
         mgr = next((a for a in agents if a.get("id") == "manager"), {})
         super().__init__(
             name="manager",
-            model=mgr.get("model", "meta/llama-3.1-70b-instruct"),
+            model=mgr.get("model", "deepseek-v4-pro"),
             system_prompt=build_manager_system(agents),
             base_url=base_url,
             api_key=api_key,
             temperature=float(mgr.get("temperature", 0.7)),
             top_p=float(mgr.get("top_p", 0.9)),
+            max_tokens=int(mgr.get("max_tokens", 8192)),
         )

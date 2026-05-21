@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-20 (Model List Overhaul session). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-21 (Full Codebase Audit session). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -9,17 +9,35 @@
 
 ## ✅ Completed
 
+### Full Codebase Audit (2026-05-21)
+- ✅ Three-pass audit complete (efficiency, bugs/security, UX); see AUDIT_REMAINING.md for surviving design questions
+- ✅ **CSRF in GitHub OAuth callback fixed** — state now HMAC-signed with SECRET_KEY (was `base64(user_id)`, forgeable)
+- ✅ **CORS lockdown** — `CORS_ALLOWED_ORIGINS` env var feeds both FastAPI middleware and Socket.IO; defaults to `*` for dev only
+- ✅ **SECRET_KEY default warning** — emits RuntimeWarning when the dev fallback is used outside AUTH_DISABLED mode
+- ✅ **Configurable JWT lifetime** via `JWT_TOKEN_DAYS` env var (default 30)
+- ✅ **Orchestrator cancellation** — replaced broken `_run_task.cancelled()` polling with explicit `_cancel_requested` flag
+- ✅ **Reviewer excluded from executor loop** — was spinning forever waiting for tasks the manager never assigned
+- ✅ **Dead reviewer Socket.IO listeners removed** — backend never emitted `reviewer_started/result/retry`
+- ✅ **Header upload removeFile stale-closure bug** — was nulling token after removing one of two files
+- ✅ **Settings Account-tab forms wired** — email and password updates now call real `/api/account/*` endpoints (were stubs)
+- ✅ **Dead code purged** — removed `backend/auth/clerk.py`, `python-jose` dependency, unused imports across backend
+- ✅ **Provider name unification** — `OpenCode Go` references reconciled to `OpenCode Zen` in config JSON files
+- ✅ **Fallback model fixed** — `meta/llama-3.1-8b-instruct` (dead NVIDIA ID) → `deepseek-v4-flash` in orchestrator + SettingsPanel
+- ✅ **Manager agent max_tokens** — was missing from manager constructor; now passes through to BaseAgent
+- ✅ **file_upload mime_map hoisted** — was rebuilt per file
+- ✅ **Test fixes** — `asyncio.get_event_loop()` → `asyncio.run()`; removed stale `reviewer in config` assertion
+- ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 25 passed / 3 integration skipped
+
 ### Dashboard UX & Agent Layout (2026-05-20)
 - ✅ **Default agent layout is empty (manager only) on fresh install / first login**
   - Backend `DEFAULT_AGENTS` in `config_loader.py` reduced to manager-only
   - Frontend `DEFAULT_CONFIG` in `SettingsPanel.tsx` reduced to manager-only
   - Users see an empty dashboard and must explicitly add agents via Settings or "+ Add agents" button
   - The manager agent is always present as the required pipeline coordinator
-- ✅ **API key settings relabeled for OpenCode Go / Zen**
-  - Settings panel provider section now labeled "OpenCode API Key" (was "NVIDIA NIM")
-  - Placeholder text: "Paste your OpenCode Go or Zen API key…"
-  - Helper text references opencode.ai/zen
-  - Provider name default changed from "NVIDIA NIM" → "OpenCode Go" in DEFAULT_PROVIDER and frontend config
+- ✅ **API key settings relabeled for OpenCode Zen**
+  - Settings panel provider section now labeled "OpenCode Zen API Key" (was "NVIDIA NIM")
+  - Placeholder text: "Paste your OpenCode Zen API key…"
+  - Provider name default changed from "NVIDIA NIM" → "OpenCode Zen" in DEFAULT_PROVIDER and frontend config
 - ✅ **Save & Apply button overlap fixed**
   - Button now uses distinct visual states: normal (accent border), saving (muted+wait cursor), saved (green)
   - No more ghosting/overlap when transitioning between states
@@ -56,18 +74,17 @@
 - ✅ **Old models completely removed** — all Llama, Mistral, GPT OSS, Phi, Jamba, Granite, Codestral, CodeLlama, Gemma, Seed, StarCoder, and old NVIDIA/Router IDs purged
 - ✅ **Fourth category "Code" removed**; "Fast / Small" renamed to "Fast"
 - ✅ **MODEL_GROUPS** in SettingsPanel.tsx — 4 groups → 3 groups with only the 13 new models
-- ✅ **MODEL_RECOMMENDATIONS** in SettingsPanel.tsx — sampling defaults (temperature, top_p, top_k) set for all 13 models
-- ✅ **MODEL_PRICING** in billing.py — per-token rates for all 13 models, old OpenRouter rates removed
+- ✅ **MODEL_RECOMMENDATIONS** in SettingsPanel.tsx — sampling defaults (temperature, top_p, top_k) set for all 46 models
+- ✅ **MODEL_PRICING** in billing.py — per-token rates for all 46 models, old OpenRouter rates removed
 - ✅ **PRO_ONLY_MODELS** in billing.py — all 6 Flagship models are Pro-only; Balanced + Fast available to Starter
 - ✅ **OpenRouter comments cleaned** in base_agent.py and config_loader.py — old model ID maps removed
 - ✅ Existing agent-team.config.json models already matched new IDs — no migration needed
 - ✅ TypeScript build passes clean (0 errors)
 
 ### Infrastructure
-- ✅ Provider switched NVIDIA NIM → OpenCode Go (2026-05-20)
-  - base_url: `https://opencode.ai/zen/go/v1`, env var: `OPENCODE_GO_API_KEY`
-  - All 9 agent model IDs updated to OpenCode Go short IDs
-  - Thinking budgets disabled (NVIDIA-specific format); ready to re-enable for OpenRouter
+- ✅ Provider switched NVIDIA NIM → OpenCode Zen (2026-05-20)
+  - base_url: `https://opencode.ai/zen/v1`, env var: `OPENCODE_GO_API_KEY`
+  - All 9 agent model IDs updated to OpenCode Zen short IDs
   - MiniMax models excluded (use Anthropic message format, incompatible with AsyncOpenAI)
   - OpenRouter migration path preserved in comment blocks in base_agent.py + config_loader.py
 - ✅ FastAPI + Socket.IO backend running
@@ -150,10 +167,10 @@
 These items require manual steps outside the codebase.
 
 ### 🔑 API Key Setup (Do First)
-- ⬜ **Set up OpenCode Go API key**
-  - Subscribe at https://opencode.ai/zen → Go → copy your API key
+- ⬜ **Set up OpenCode Zen master API key**
+  - Subscribe at https://opencode.ai/zen → copy your API key
   - Set `OPENCODE_GO_API_KEY=<key>` in `.env`
-  - `provider.apiKey` in `agent-team.config.json` is already `""` — falls back to env var
+  - This is a single master key — no per-user keys needed (BYOK removed)
   - Until done: all agent runs fail with authentication error
 
 ### 📦 Dependencies
@@ -235,7 +252,7 @@ These are improvements to build next when external services are wired up.
   main app header when balance < $1.00 to prompt top-up before credits run out mid-run.
 
 ### Medium Priority
-- ⬜ **Retry logic in `base_agent.py` for NVIDIA NIM 429 rate limits**
+- ⬜ **Retry logic in `base_agent.py` for OpenCode Zen 429 rate limits**
   Currently no retry — a 429 propagates as empty content and silently corrupts the run.
   Add exponential backoff (3 retries, 2s/4s/8s) before giving up.
 
@@ -263,7 +280,7 @@ These are improvements to build next when external services are wired up.
 
 ---
 
-## ❌ Blocked
+##  Blocked
 
 | Task | Blocker |
 |---|---|
@@ -285,12 +302,12 @@ These are improvements to build next when external services are wired up.
 | 2026-05-20 | Fire-and-forget credit deduction | Billing failures cannot interrupt runs. Wrapped in `try/except Exception: pass`. |
 | 2026-05-20 | Pro-only models gated at orchestrator level, not agent level | Config is read once per run. Gating during config mutation (not at API call time) is simpler and testable. |
 | 2026-05-20 | Logout removed from Header | Caused accidental logouts. Logout lives only on AccountPage Danger Zone section. |
-| 2026-05-20 | NVIDIA NIM over OpenRouter | Faster cold start, better rate limits for current usage. OpenRouter code preserved (commented) as a fallback option. |
+| 2026-05-20 | OpenCode Zen over OpenRouter | Single master key, full 46-model catalog. OpenRouter code preserved (commented) as a fallback option. |
 | 2026-05-20 | Custom auth over Clerk | Clerk added complexity and external dependency. Custom JWT is simpler, faster, and works offline. |
 | 2026-05-20 | Balance shown as percentage, not dollars | Usage amounts should never show dollar values. Only payment-related items (plan prices, pack costs) use dollars. Percentages are clearer for credit depletion tracking. |
 | 2026-05-20 | BillingPage centered layout | Previous left-aligned layout left half the screen as dead space. Centered layout with `maxWidth: 780` uses screen real estate better. |
 | 2026-05-20 | Admin bypass redirects to dashboard | After entering valid admin key, user should be taken directly to the main app, not left on the billing page. `navigate('/')` after `fetchUsage()` ensures BillingGate sees the updated plan. |
 | 2026-05-20 | Default agent layout is manager-only | Fresh installs start with only the Manager coordinator. Users explicitly add workers via Settings or "+ Add agents" button. Avoids overwhelming new users with 9 agents before they understand the system. |
-| 2026-05-20 | "Recommended layout" button in Settings | One-click setup of all 9 agents with tested OpenCode Go model assignments. Replaces all current agents. Includes confirmation dialog and API key warning. |
+| 2026-05-20 | "Recommended layout" button in Settings | One-click setup of all 9 agents with tested Zen model assignments. Replaces all current agents. Includes confirmation dialog and API key warning. |
 | 2026-05-20 | "+ Add agents" direct shortcut in sidebar | Quick access from the main dashboard to the agent configuration pane, reducing friction for new users who see an empty agent list. |
-| 2026-05-20 | Curated 13-model set (Flagship/Balanced/Fast) | Replaced 40+ disjoint models with a focused set of 13. 6 Flagship (Pro-only), 6 Balanced, 1 Fast. Removed old Llama/Mistral/Phi/Gemma/etc. Cleaner UX, easier pricing, consistent with OpenCode Go catalog. |
+| 2026-05-20 | Curated 46-model set (Flagship/Balanced/Budget) | Expanded to full OpenCode Zen catalog: 6 Flagship → 46 models across 3 tiers. PRO_ONLY_MODELS covers all expensive models (>$2/M input). |

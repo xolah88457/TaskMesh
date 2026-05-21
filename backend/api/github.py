@@ -20,7 +20,8 @@ For simplicity, this implementation stores it in plaintext — add encryption
 before going to production (use Python cryptography.fernet).
 """
 import base64
-import json
+import hashlib
+import hmac
 import os
 from datetime import datetime, timezone
 
@@ -37,8 +38,31 @@ GITHUB_CLIENT_ID     = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
 GITHUB_REDIRECT_URI  = os.environ.get("GITHUB_REDIRECT_URI", "http://localhost:8000/api/github/callback")
 FRONTEND_URL         = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+SECRET_KEY           = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 # Note: GITHUB_CLIENT_ID/SECRET here are for code-push OAuth.
 # Login OAuth uses GITHUB_AUTH_CLIENT_ID/SECRET in backend/api/auth.py.
+
+
+def _sign_state(user_id: str) -> str:
+    """Pack user_id with an HMAC signature so the callback can verify it wasn't forged."""
+    raw = user_id.encode()
+    sig = hmac.new(SECRET_KEY.encode(), raw, hashlib.sha256).digest()[:16]
+    return base64.urlsafe_b64encode(raw + b"." + base64.urlsafe_b64encode(sig)).decode().rstrip("=")
+
+
+def _verify_state(state: str) -> str:
+    """Return the user_id encoded in state, or raise if signature doesn't match."""
+    try:
+        padded = state + "=" * (-len(state) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode())
+        raw, sig_b64 = decoded.rsplit(b".", 1)
+        sig = base64.urlsafe_b64decode(sig_b64)
+        expected = hmac.new(SECRET_KEY.encode(), raw, hashlib.sha256).digest()[:16]
+        if not hmac.compare_digest(sig, expected):
+            raise ValueError("bad signature")
+        return raw.decode()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid OAuth state: {e}")
 
 
 class PushRequest(BaseModel):
@@ -55,7 +79,7 @@ async def github_auth(user: dict = Depends(require_auth)):
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=503, detail="GitHub OAuth not configured")
     user_id = user.get("sub", "")
-    state   = base64.b64encode(user_id.encode()).decode()
+    state   = _sign_state(user_id)
     url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
@@ -72,7 +96,7 @@ async def github_callback(code: str, state: str, request: Request):
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="GitHub OAuth not configured")
 
-    user_id = base64.b64decode(state.encode()).decode()
+    user_id = _verify_state(state)
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(

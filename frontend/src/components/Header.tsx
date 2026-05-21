@@ -1,8 +1,9 @@
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useState } from 'react'
 import logo from '../assets/logo.png'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { useAuthContext } from '../context/auth'
+import { useAuthFetch } from '../hooks/useAuthFetch'
 
 interface Props {
   project: string
@@ -11,21 +12,38 @@ interface Props {
   progress: number
   elapsedSeconds: number
   running: boolean
-  onStart: (brief: string) => void
+  onStart: (brief: string, uploadToken?: string) => void
   onStop: () => void
   onSettings: () => void
+}
+
+interface UploadedFile {
+  filename: string
+  size: number
 }
 
 function pad(n: number) { return String(n).padStart(2, '0') }
 
 const TEXTAREA_MAX_H = 140
 
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
 export default function Header({ project, sprint, feature, progress, elapsedSeconds, running, onStart, onStop, onSettings }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const { user }    = useAuthContext()
+  const authFetch   = useAuthFetch()
   const mm = pad(Math.floor(elapsedSeconds / 60))
   const ss = pad(elapsedSeconds % 60)
   const displayFeature = feature || (running ? '…' : 'Ready')
+
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [uploadToken, setUploadToken]     = useState<string | null>(null)
+  const [uploading, setUploading]         = useState(false)
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current
@@ -35,10 +53,64 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
     el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_H ? 'auto' : 'hidden'
   }, [])
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawFiles = e.target.files
+    if (!rawFiles || rawFiles.length === 0) return
+
+    setUploading(true)
+    const fileItems: { filename: string; content: string }[] = []
+
+    for (let i = 0; i < rawFiles.length; i++) {
+      const f = rawFiles[i]
+      const content = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = reader.result as string
+          // Strip data:...;base64, prefix
+          const base64 = result.includes('base64,') ? result.split('base64,')[1] : result
+          resolve(base64)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(f)
+      })
+      fileItems.push({ filename: f.name, content })
+    }
+
+    try {
+      const r = await authFetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: fileItems }),
+      })
+      const data = await r.json()
+      if (data.error) {
+        alert(data.error)
+      } else {
+        setUploadToken(data.upload_token)
+        setUploadedFiles(data.files.map((f: { filename: string; size: number }) => ({
+          filename: f.filename, size: f.size,
+        })))
+      }
+    } catch {
+      alert('Upload failed — is the backend running?')
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   const handleStart = () => {
     const val = textareaRef.current?.value.trim() ?? ''
     const brief = val || `Build the next feature for the ${project || 'project'}.`
-    onStart(brief)
+    onStart(brief, uploadToken ?? undefined)
+  }
+
+  const removeFile = (filename: string) => {
+    setUploadedFiles(prev => {
+      const next = prev.filter(f => f.filename !== filename)
+      if (next.length === 0) setUploadToken(null)
+      return next
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -67,45 +139,89 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
         <span className="text-[var(--c-text-1)] font-medium whitespace-nowrap">{displayFeature}</span>
       </div>
 
-      {/* Expandable brief textarea + start */}
-      <div className="flex items-start gap-2 flex-1 min-w-0">
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          onInput={autoResize}
-          onKeyDown={handleKeyDown}
-          disabled={running}
-          placeholder="Describe your project goal… (Enter to start, Shift+Enter for newline)"
-          className="flex-1 min-w-0 text-xs font-mono rounded px-2 py-1.5 focus:outline-none disabled:opacity-40 resize-none leading-relaxed"
-          style={{
-            height: '30px',
-            overflowY: 'hidden',
-            maxHeight: TEXTAREA_MAX_H,
-            background: 'var(--c-input-bg)',
-            border: '1px solid var(--c-border)',
-            color: 'var(--c-text-1)',
-          }}
-        />
-        {running ? (
-          <button
-            onClick={onStop}
-            className="text-xs font-mono px-3 py-1.5 rounded transition-colors shrink-0 h-7 self-start"
-            style={{ border: '1px solid rgba(239,68,68,0.5)', color: '#ef4444' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.1)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          >
-            ■ Stop
-          </button>
-        ) : (
-          <button
-            onClick={handleStart}
-            className="text-xs font-mono px-3 py-1.5 rounded transition-colors shrink-0 h-7 self-start"
-            style={{ border: '1px solid var(--c-accent-border)', color: 'var(--c-accent)' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent-dim)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          >
-            ▶ Start
-          </button>
+      {/* Expandable brief textarea + start + file upload */}
+      <div className="flex flex-col gap-1 flex-1 min-w-0">
+        <div className="flex items-start gap-2">
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            onInput={autoResize}
+            onKeyDown={handleKeyDown}
+            disabled={running}
+            placeholder="Describe your project goal… (Enter to start, Shift+Enter for newline)"
+            className="flex-1 min-w-0 text-xs font-mono rounded px-2 py-1.5 focus:outline-none disabled:opacity-40 resize-none leading-relaxed"
+            style={{
+              height: '30px',
+              overflowY: 'hidden',
+              maxHeight: TEXTAREA_MAX_H,
+              background: 'var(--c-input-bg)',
+              border: '1px solid var(--c-border)',
+              color: 'var(--c-text-1)',
+            }}
+          />
+          {running ? (
+            <button
+              onClick={onStop}
+              className="text-xs font-mono px-3 py-1.5 rounded transition-colors shrink-0 h-7 self-start"
+              style={{ border: '1px solid rgba(239,68,68,0.5)', color: '#ef4444' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.1)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              ■ Stop
+            </button>
+          ) : (
+            <button
+              onClick={handleStart}
+              className="text-xs font-mono px-3 py-1.5 rounded transition-colors shrink-0 h-7 self-start"
+              style={{ border: '1px solid var(--c-accent-border)', color: 'var(--c-accent)' }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent-dim)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              ▶ Start
+            </button>
+          )}
+        </div>
+
+        {/* File upload row */}
+        {!running && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="text-[9px] font-mono px-2 py-0.5 rounded transition-colors disabled:opacity-40"
+              style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-3)' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
+            >
+              {uploading ? 'Uploading…' : '📎 Attach files'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            {uploadedFiles.map(f => (
+              <span
+                key={f.filename}
+                className="text-[9px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1"
+                style={{ background: 'var(--c-surface-3)', color: 'var(--c-text-2)', border: '1px solid var(--c-border)' }}
+              >
+                <span className="truncate max-w-[120px]" title={f.filename}>{f.filename}</span>
+                <span style={{ color: 'var(--c-text-4)' }}>{formatSize(f.size)}</span>
+                <button
+                  onClick={() => removeFile(f.filename)}
+                  className="text-[8px] ml-0.5"
+                  style={{ color: 'var(--c-text-4)' }}
+                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-4)')}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
         )}
       </div>
 

@@ -19,7 +19,6 @@ Tests cover:
 """
 
 import asyncio
-import json
 import sys
 import pytest
 
@@ -284,11 +283,11 @@ class TestIntegration:
                 )
                 return resp
 
-        resp = asyncio.get_event_loop().run_until_complete(_run())
+        resp = asyncio.run(_run())
         assert resp.status_code == 200
         data = resp.json()
         assert data.get("status") == "started" or data.get("error") in (
-            "already running", "orchestrator not ready"
+            "already running", "orchestrator not ready", "no_subscription", "no_credits",
         ), f"Unexpected response: {data}"
 
     def test_config_endpoint_returns_agents(self):
@@ -300,14 +299,12 @@ class TestIntegration:
             async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
                 return await client.get("/api/config", timeout=5)
 
-        resp = asyncio.get_event_loop().run_until_complete(_run())
+        resp = asyncio.run(_run())
         assert resp.status_code == 200
         data = resp.json()
         assert "agents" in data
         agent_ids = [a["id"] for a in data["agents"]]
-        # Reviewer should be in config
-        assert "reviewer" in agent_ids, "reviewer agent must be in config"
-        # Manager should be in config
+        # Manager is the only required agent; reviewer is optional and not in DEFAULT_AGENTS.
         assert "manager" in agent_ids
 
     def test_cancel_when_idle_returns_cancelling(self):
@@ -319,7 +316,7 @@ class TestIntegration:
             async with httpx.AsyncClient(base_url="http://localhost:8000") as client:
                 return await client.post("/api/cancel", timeout=5)
 
-        resp = asyncio.get_event_loop().run_until_complete(_run())
+        resp = asyncio.run(_run())
         assert resp.status_code == 200
         # Returns cancelling even if nothing is running (idempotent)
         data = resp.json()

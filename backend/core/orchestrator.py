@@ -1,18 +1,18 @@
 """
-Multi-agent orchestrator — four-phase pipeline + coordination layer.
+Multi-agent orchestrator — dynamic shared-task-list coordination.
 
-Phases:
-  0  Manager selects which agents are needed for this brief.
-  1  Planners (webdev, researcher, …) draft specs in parallel.
-  2  Manager synthesises specs into a JSON task breakdown.
-  3  Executors run concurrently; each writes [FILE:…] blocks to PROJECT_DIR.
-  4  Reviewer checks all output; sends feedback if revision needed (1 retry).
+Architecture:
+  Phase 1 — Manager creates a task plan from the brief (+ uploaded files).
+  Phase 2 — All agents run concurrently, claiming tasks from a SharedTaskList.
+            Each agent loops: claim → execute → write files → complete → repeat.
+  Phase 3 — The orchestrator monitors until all tasks are done or cancelled.
 
-Coordination improvements:
-  - FileLockRegistry  : exclusive file ownership per agent during a run.
-  - AgentMailbox      : typed async message store for cross-agent comms.
-  - CoordinatorLog    : structured log of every coordinator decision.
-  - Auto-commit       : git commit after each executor task's files land.
+Coordination primitives:
+  - SharedTaskList   : in-memory task queue (agents claim tasks autonomously)
+  - FileLockRegistry : exclusive file ownership per agent during a run
+  - AgentMailbox     : typed async message store for cross-agent comms
+  - CoordinatorLog   : structured log of every coordinator decision
+  - Auto-commit      : git commit after each agent task's files land
 """
 
 from __future__ import annotations
@@ -29,26 +29,15 @@ import socketio
 from ..agents.base_agent import BaseAgent
 from ..agents.manager_agent import ManagerAgent
 from ..core.config_loader import ProjectConfig, get_project_dir, load_config
+from ..core.task_list import SharedTaskList
 from ..db.session import get_session
 from ..db.models import Run, RunFile, UserUsage
 
-# ─── regex for [FILE: path] blocks ────────────────────────────────────────────
-_FILE_BLOCK_RE = re.compile(r'\[FILE:\s*([^\]\n]+)\]\n?(.*?)\n?\[/FILE\]', re.DOTALL)
-
-_FILE_FORMAT_INSTRUCTION = """
-
-For every file you create or modify, output it using this exact format — no exceptions:
-
-[FILE: relative/path/from/project/root]
-complete file contents here
-[/FILE]
-
-Rules:
-- Paths are relative to the project root (e.g. src/app.py, tests/test_auth.py, README.md)
-- Write COMPLETE, RUNNABLE code — no pseudocode, no "# TODO implement", no "..." placeholders
-- Multiple files are allowed; write each as its own [FILE]...[/FILE] block
-- Do not truncate or summarise — write the full file every time
-"""
+# ─── file-block regex for agent output parsing ───────────────────────────────
+_FILE_RE = re.compile(
+    r'^---\s*FILE:\s*(.+?)\s*---\s*$(.+?)^---\s*END\s*FILE\s*---\s*$',
+    re.MULTILINE | re.DOTALL
+)
 
 
 # ─── coordination helpers ──────────────────────────────────────────────────────
@@ -150,9 +139,9 @@ class CoordinatorLog:
     """
     Structured log of every coordinator decision during a run.
 
-    Decision types: task_created, agent_assigned, file_locked, file_conflict,
-                    blocker_raised, reviewer_started, reviewer_approved,
-                    reviewer_rejected, retry_started, run_complete.
+    Decision types: task_created, task_claimed, task_completed,
+                    agent_online, agent_finished, file_locked, file_conflict,
+                    auto_commit, run_complete.
     """
 
     def __init__(self) -> None:
@@ -180,24 +169,6 @@ class CoordinatorLog:
         self._entries.clear()
 
 
-# ─── agent role helpers ────────────────────────────────────────────────────────
-
-def _is_planner(agent_cfg: dict) -> bool:
-    return bool(agent_cfg.get("planner", False))
-
-def _is_reviewer(agent_cfg: dict) -> bool:
-    return (
-        agent_cfg.get("id") == "reviewer"
-        or agent_cfg.get("role", "").lower() in ("reviewer", "code reviewer", "code review")
-    )
-
-def _is_scout(agent_cfg: dict) -> bool:
-    return (
-        agent_cfg.get("id") == "scout"
-        or agent_cfg.get("role", "").lower() in ("scout", "researcher", "tech lead")
-    )
-
-
 # ─── misc helpers ──────────────────────────────────────────────────────────────
 
 def _now() -> str:
@@ -210,21 +181,6 @@ def _truncate(s: str, n: int = 100) -> str:
     return s[:n] + "…" if len(s) > n else s
 
 
-def _build_manager_input(brief: str, planner_outputs: dict[str, str]) -> str:
-    if not planner_outputs:
-        return brief
-    sections = "\n\n".join(
-        f"== {aid.upper()} SPEC ==\n{output}"
-        for aid, output in planner_outputs.items()
-    )
-    return (
-        f"Project brief: {brief}\n\n"
-        "The following planning specialists have already analysed this brief "
-        "and submitted their specs. Use their output to produce a more informed task breakdown.\n\n"
-        f"{sections}"
-    )
-
-
 # ─── orchestrator ─────────────────────────────────────────────────────────────
 
 class Orchestrator:
@@ -235,15 +191,18 @@ class Orchestrator:
         self._agents: dict[str, BaseAgent] = {}
         self._file_poll_task: asyncio.Task | None = None
         self._run_task: asyncio.Task | None = None
+        self._cancel_requested: bool = False
 
         # coordination state — cleared at start of each run
         self._file_locks   = FileLockRegistry()
         self._mailbox      = AgentMailbox()
         self._coord_log    = CoordinatorLog()
+        self._task_list    = SharedTaskList()
 
         # per-run execution tracking
-        self._executor_outputs: dict[str, str] = {}   # agent_id -> raw LLM output
-        self._executor_files:   dict[str, list[str]] = {}  # agent_id -> [paths]
+        self._agent_written_files: dict[str, list[str]] = {}  # agent_id -> [paths]
+        self._agent_loops: list[asyncio.Task] = []            # active agent loop tasks
+        self._team_active = False
 
         self._setup_agents(config)
 
@@ -261,7 +220,7 @@ class Orchestrator:
                 continue
             self._agents[a["id"]] = BaseAgent(
                 name=a["id"],
-                model=a.get("model", "meta/llama-3.1-8b-instruct"),
+                model=a.get("model", "deepseek-v4-flash"),
                 system_prompt=a.get("system_prompt", ""),
                 base_url=base_url,
                 api_key=api_key,
@@ -278,6 +237,10 @@ class Orchestrator:
         return self._run_task is not None and not self._run_task.done()
 
     def cancel(self) -> None:
+        # Set the flag first so agent loops and the monitor exit cleanly at their
+        # next iteration. Then cancel the outer task so any in-flight `await`
+        # raises CancelledError immediately.
+        self._cancel_requested = True
         if self._run_task and not self._run_task.done():
             self._run_task.cancel()
 
@@ -355,11 +318,10 @@ class Orchestrator:
             await self._emit_terminal(f"[error] {e}")
 
     async def _auto_commit(self, agent_id: str, task_title: str, files: list[str]) -> None:
-        """Conventional commit after each executor task (non-blocking if git fails)."""
+        """Conventional commit after each agent task (non-blocking if git fails)."""
         if not files:
             return
         try:
-            # Stage only the files this agent wrote
             proc = await asyncio.create_subprocess_exec(
                 "git", "add", "--", *files,
                 cwd=str(self._cwd),
@@ -404,14 +366,16 @@ class Orchestrator:
 
     # ── file writing with lock tracking ───────────────────────────────────────
 
-    async def _write_agent_files(
-        self, agent_id: str, output: str, run_id: str = ""
+    async def _write_files_from_parsed(
+        self, agent_id: str, parsed_files: list[tuple[str, str]], run_id: str = ""
     ) -> list[str]:
+        """Write files from (rel_path, content) tuples with lock tracking. Returns written paths."""
         written: list[str] = []
 
-        for match in _FILE_BLOCK_RE.finditer(output):
-            rel_path = match.group(1).strip().lstrip("/")
-            content  = match.group(2)
+        for rel_path, content in parsed_files:
+            rel_path = rel_path.strip().lstrip("/")
+            if not rel_path:
+                continue
 
             # Guard against path traversal
             target = (self._cwd / rel_path).resolve()
@@ -422,7 +386,6 @@ class Orchestrator:
             # File-lock check
             acquired, holder = self._file_locks.acquire(rel_path, agent_id)
             if not acquired:
-                # Conflict — log it, take over (last-write wins)
                 await self._emit_terminal(
                     f"  [conflict] {rel_path} held by {holder}, {agent_id} taking over"
                 )
@@ -463,27 +426,34 @@ class Orchestrator:
     # ── credit deduction (fire-and-forget) ────────────────────────────────────
 
     async def _deduct_credits(self, result: dict) -> None:
-        """Deduct token cost from UserCredits after an agent call. Never raises."""
+        """Deduct token cost from UserCredits after an agent call + log to ZenUsage. Never raises."""
         user_id = getattr(self, "_current_user_id", "anonymous")
         if user_id == "anonymous":
             return
         try:
             from ..api.billing import calc_cost_cents
-            from ..db.models import UserCredits
-            cost = calc_cost_cents(
-                result.get("model", ""),
-                result.get("prompt_tokens", 0),
-                result.get("completion_tokens", 0),
-            )
-            if cost <= 0:
-                return
+            from ..db.models import UserCredits, ZenUsage
+            model      = result.get("model", "")
+            prompt     = result.get("prompt_tokens", 0)
+            completion = result.get("completion_tokens", 0)
+            cost       = calc_cost_cents(model, prompt, completion)
+            run_id     = getattr(self, "_run_id", "")
             async with get_session() as session:
                 if session is None:
                     return
-                creds = await session.get(UserCredits, user_id)
-                if creds is not None:
-                    creds.balance_cents = max(0, creds.balance_cents - cost)
-                    creds.updated_at    = datetime.now(timezone.utc)
+                if cost > 0:
+                    creds = await session.get(UserCredits, user_id)
+                    if creds is not None:
+                        creds.balance_cents = max(0, creds.balance_cents - cost)
+                        creds.updated_at    = datetime.now(timezone.utc)
+                session.add(ZenUsage(
+                    user_id=user_id,
+                    run_id=run_id,
+                    model=model,
+                    prompt_tokens=prompt,
+                    completion_tokens=completion,
+                    cost_cents=cost,
+                ))
         except Exception:
             pass  # billing failures must never block runs
 
@@ -496,22 +466,27 @@ class Orchestrator:
         agent_limit: int | None = None,
         plan: str = "pro",
         api_key: str = "",
+        upload_dir: str = "",
     ) -> None:
         self._run_task = asyncio.current_task()
         self._current_user_id = user_id
         self._agent_limit     = agent_limit
         self._plan            = plan
         self._api_key         = api_key
+        self._upload_dir      = upload_dir
         cancelled = False
         run_id    = str(uuid.uuid4())
+        self._run_id          = run_id
         year_month = datetime.now(timezone.utc).strftime("%Y-%m")
 
         # Clear per-run coordination state
         self._file_locks.clear()
         self._mailbox.clear()
         self._coord_log.clear()
-        self._executor_outputs.clear()
-        self._executor_files.clear()
+        self._task_list.clear()
+        self._agent_written_files.clear()
+        self._team_active = False
+        self._cancel_requested = False
 
         # Persist run start + increment usage counter
         async with get_session() as session:
@@ -526,11 +501,10 @@ class Orchestrator:
         try:
             self.config = load_config()
 
-            # Apply user-scoped API key (overrides env var / config file key)
             if api_key:
                 self.config.provider.apiKey = api_key
 
-            # Apply Starter plan model restrictions (Option B)
+            # Apply Starter plan model restrictions
             if plan != "pro":
                 from ..api.billing import PRO_ONLY_MODELS, STARTER_MODEL_FALLBACK
                 from ..core.config_loader import ProjectConfig
@@ -608,110 +582,82 @@ class Orchestrator:
             self._run_task = None
             self._file_locks.clear()
 
-    # ── Phase 0: manager selects agents ───────────────────────────────────────
-
-    async def _select_agents(
-        self, brief: str, non_mgr: list[dict]
-    ) -> tuple[list[str], str]:
-        agent_list = "\n".join(
-            f'- {a["id"]}: {a.get("role", a["id"])} ({"Planner" if a.get("planner") else "Executor"})'
-            for a in non_mgr
-        )
-        prompt = (
-            f"Project brief: {brief}\n\n"
-            f"Available agents:\n{agent_list}\n\n"
-            "Select only the agents needed. Return ONLY valid JSON:\n"
-            '{"selected":["id1","id2"],"reason":"one sentence why"}'
-        )
-
-        mgr_cfg = next((a for a in self.config.agents if a.get("id") == "manager"), {})
-        selector = BaseAgent(
-            name="selector",
-            model=mgr_cfg.get("model", "deepseek-ai/deepseek-v4-pro"),
-            system_prompt=(
-                "You are a project coordinator. Given a project brief and a list of agents, "
-                "select only the agents actually needed. Return ONLY valid JSON with keys "
-                "'selected' (array of agent IDs from the list) and 'reason' (one sentence). "
-                "Be selective — small projects don't need every specialist."
-            ),
-            base_url=self.config.provider.baseURL,
-            api_key=self.config.provider.apiKey,
-            temperature=0.3,
-            max_tokens=256,
-        )
-
-        _sel_res = await selector.run(prompt)
-        asyncio.create_task(self._deduct_credits(_sel_res))
-        raw = _sel_res["content"]
-        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if json_match:
-            try:
-                data     = json.loads(json_match.group())
-                selected = data.get("selected", [])
-                reason   = data.get("reason", "")
-                valid_ids = {a["id"] for a in non_mgr}
-                selected  = [s for s in selected if s in valid_ids]
-                if selected:
-                    return selected, reason
-            except json.JSONDecodeError:
-                pass
-
-        return [a["id"] for a in non_mgr], "Using full team for this project."
-
-    # ── three+one-phase pipeline ───────────────────────────────────────────────
+    # ── pipeline ───────────────────────────────────────────────────────────────
 
     async def _run_pipeline(self, brief: str, run_id: str = "") -> None:
-        # Separate reviewer from the selectable pool — it always runs Phase 4 if present
-        reviewer_cfg = next(
-            (a for a in self.config.agents if _is_reviewer(a)), None
-        )
-        non_mgr_all = [
-            a for a in self.config.agents
-            if a.get("id") != "manager" and not _is_reviewer(a)
-        ]
-
         await self._emit_terminal("$ agent-team start")
 
-        # ── Phase 0: manager selects the right team ────────────────────────────
-        await self._emit_agent("manager", "thinking")
-        await self._emit_log("manager", "Analyzing project brief — selecting the right team…")
-        await self._clog("phase_start", "Phase 0: agent selection", {"brief": brief[:120]})
+        # Identify non-manager, non-reviewer agents.
+        # Manager is the planner (Phase 1) and reviewer is excluded from the executor
+        # task list by build_manager_system — including either in the execution loop
+        # would spin a no-op worker waiting for tasks that never get created.
+        _REVIEWER_ROLES = {"reviewer", "code reviewer", "code review"}
+        agent_cfgs = [
+            a for a in self.config.agents
+            if a.get("id") != "manager"
+            and a.get("id") != "reviewer"
+            and a.get("role", "").lower() not in _REVIEWER_ROLES
+        ]
+        agent_ids = [str(a["id"]) for a in agent_cfgs if a.get("id")]
 
-        selected_ids, reason = await self._select_agents(brief, non_mgr_all)
-
-        # Apply Starter plan agent cap (3 max)
+        # Apply agent limit if set (Starter plan)
         agent_limit = getattr(self, "_agent_limit", None)
-        if agent_limit is not None and len(selected_ids) > agent_limit:
-            selected_ids = selected_ids[:agent_limit]
-            reason += f" (capped at {agent_limit} for Starter plan)"
+        if agent_limit is not None and len(agent_ids) > agent_limit:
+            agent_ids = agent_ids[:agent_limit]
 
-        await self.sio.emit("agents_selected", {"agentIds": selected_ids})
-        await self._emit_log("manager", f"Team: {', '.join(selected_ids)}. {reason}")
-        await self._emit_agent("manager", "idle")
-        await self._clog("agent_assigned", f"Selected: {', '.join(selected_ids)}", {"reason": reason})
+        await self.sio.emit("agents_selected", {"agentIds": agent_ids})
+        await self._emit_log("manager", f"Team: {', '.join(agent_ids)}.")
 
-        non_mgr   = [a for a in non_mgr_all if a["id"] in selected_ids]
-        planners  = [a for a in non_mgr if _is_planner(a)]
-        executors = [a for a in non_mgr if not _is_planner(a)]
-
-        # ── Phase 1: planners draft their specs independently ──────────────────
-        planner_outputs: dict[str, str] = {}
-        if planners:
-            await self._emit_log("manager", f"Phase 1 — {len(planners)} planner(s) drafting specs in parallel…")
-            await self._clog("phase_start", f"Phase 1: {len(planners)} planners running")
-            planner_outputs = await self._run_planners(brief, planners)
-            await self._emit_log("manager", "All planner specs received. Starting synthesis…")
-
-        # ── Phase 2: manager synthesises plans into task breakdown ─────────────
+        # ── Phase 1: Manager creates the task plan ─────────────────────────────
         await self._emit_agent("manager", "thinking")
-        await self._emit_log("manager", "Analysing brief and synthesising plans…")
-        await self._clog("phase_start", "Phase 2: manager synthesis")
+        await self._emit_log("manager", "Analyzing brief and creating task plan…")
+        await self._clog("phase_start", "Phase 1: manager creating task plan", {"brief": brief[:120]})
 
-        manager_input = _build_manager_input(brief, planner_outputs)
-        _mgr_res = await self.manager.run(manager_input)
+        # Build the manager prompt with agent roster + upload context
+        agent_roster = "\n".join(
+            f'- {a.get("id", "?")}: {a.get("role", a.get("id", "?"))}'
+            for a in self.config.agents
+            if a.get("id") != "manager"
+        )
+        manager_prompt = (
+            f"Project brief: {brief}\n\n"
+            f"Available agents:\n{agent_roster}\n\n"
+        )
+        if hasattr(self, "_upload_dir") and self._upload_dir:
+            upload_path = Path(self._upload_dir)
+            if upload_path.exists():
+                try:
+                    from ..core.file_upload import build_file_manifest
+                    files_list: list[dict] = []
+                    for f in sorted(upload_path.iterdir()):
+                        if f.is_file():
+                            files_list.append({
+                                "filename": f.name,
+                                "size": f.stat().st_size,
+                                "mime_type": "application/octet-stream",
+                                "preview": "",
+                            })
+                    manifest = build_file_manifest(files_list)
+                    if manifest:
+                        manager_prompt += (
+                            f"\nThe following files were uploaded for this project. "
+                            f"Use them as design reference when creating tasks:\n\n{manifest}\n\n"
+                        )
+                except Exception:
+                    pass
+
+        manager_prompt += (
+            "Create a task breakdown for the agents to execute. "
+            "Return ONLY valid JSON — no markdown, no code fences:\n"
+            '{"feature": "3-5 word name", "analysis": "1-2 sentence overview", '
+            '"tasks": [{"id": "t1", "title": "<task>", "description": "<details>", "tag": "3-char tag"}]}\n'
+        )
+
+        _mgr_res = await self.manager.run(manager_prompt)
         asyncio.create_task(self._deduct_credits(_mgr_res))
         raw = _mgr_res["content"]
 
+        # Parse manager JSON output
         json_match = re.search(r'\{.*\}', raw, re.DOTALL)
         plan: dict = {}
         if json_match:
@@ -720,7 +666,7 @@ class Orchestrator:
             except json.JSONDecodeError:
                 pass
 
-        feature  = plan.get("feature",  "")
+        feature  = plan.get("feature", "")
         analysis = plan.get("analysis", "Decomposing project into subtasks…")
         tasks    = plan.get("tasks", [])
 
@@ -730,345 +676,210 @@ class Orchestrator:
             await self.sio.emit("feature_set", {"feature": feature})
             await self._emit_log("manager", f"Operation: {feature}")
 
+        # Dispatch tasks to SharedTaskList
         if tasks:
-            await self.sio.emit("tasks_init", {"tasks": tasks})
+            for t in tasks:
+                desc = t.get("description", "")
+                title = t.get("title", "Untitled task")
+                self._task_list.add_task(
+                    title=title,
+                    description=desc,
+                    created_by="manager",
+                    status="available",
+                )
+            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()})
             await self._clog("task_created", f"Created {len(tasks)} tasks: {[t.get('title','') for t in tasks]}")
-
-        await self._emit_agent("manager", "delegating")
-        await self._emit_log("manager", f"Delegating {len(tasks)} tasks across {len(executors)} executor(s).")
-
-        mgr_task = next((t for t in tasks if t.get("tag") == "MGR"), None)
-        if mgr_task:
-            await self._emit_task_done(mgr_task["id"])
+        else:
+            # Fallback: create a single task if no tasks from manager
+            self._task_list.add_task(
+                title="Implement the project",
+                description=brief[:200],
+                created_by="manager",
+                status="available",
+            )
+            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()})
 
         await self._emit_agent("manager", "done")
+        await self._emit_log("manager", f"Task plan ready — {len(self._task_list.all_tasks())} tasks.")
 
-        for a in executors:
-            short = a["id"].upper()[:3]
-            agent_tasks = [t for t in tasks if t.get("tag") == short]
-            if agent_tasks:
-                summary = "; ".join(t["title"] for t in agent_tasks)
-                await self._bus_send("manager", a["id"], f"Your tasks: {summary}")
-                await self._clog("agent_assigned", f"Assigned to {a['id']}: {summary}", {"agent": a["id"]})
+        # Persist task list to disk for crash recovery
+        self._task_list.save_to_disk(run_id, self._cwd)
 
-        # ── Phase 3: executors run concurrently ────────────────────────────────
-        if executors:
-            await self._emit_log("manager", f"Phase 3 — launching {len(executors)} executor(s)…")
-            await self._clog("phase_start", f"Phase 3: {len(executors)} executors running concurrently")
+        # ── Phase 2: Launch agent loops ────────────────────────────────────────
+        self._team_active = True
+        await self._emit_log("manager", f"Phase 2 — launching {len(agent_ids)} agent(s)…")
+        await self._clog("phase_start", f"Phase 2: {len(agent_ids)} agents running agent loops")
 
-        async def staggered(agent_cfg: dict, delay: float) -> None:
+        # Launch each agent in a concurrent loop, staggered by 0.5s
+        async def launch_agent(aid: str, delay: float) -> None:
             await asyncio.sleep(delay)
-            await self._run_executor(agent_cfg, tasks, brief, planner_outputs, run_id)
+            await self._run_agent_loop(aid, brief, run_id)
 
-        await asyncio.gather(*(staggered(a, i * 0.5) for i, a in enumerate(executors)))
+        agent_tasks = [launch_agent(aid, i * 0.5) for i, aid in enumerate(agent_ids)]
+        self._agent_loops = [asyncio.create_task(t) for t in agent_tasks]
+
+        # ── Phase 3: Monitor until completion ──────────────────────────────────
+        while self._team_active:
+            await asyncio.sleep(2)
+
+            # Emit file updates
+            count, files = await self._git_status()
+            await self._emit_files(count, files)
+
+            # Emit task list updates
+            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()})
+
+            # Persist task list
+            self._task_list.save_to_disk(run_id, self._cwd)
+
+            # Check if all agents are done
+            all_loops_done = all(t.done() for t in self._agent_loops) if self._agent_loops else True
+            all_tasks_done = self._task_list.is_all_done()
+
+            if all_loops_done and all_tasks_done:
+                self._team_active = False
+
+            # Check for cancellation
+            if self._cancel_requested:
+                self._team_active = False
+
+        # ── Phase 4: Finalize ──────────────────────────────────────────────────
+        # Cancel any lingering agent loops
+        for t in self._agent_loops:
+            if not t.done():
+                t.cancel()
 
         # Persist which agents were selected
         async with get_session() as session:
             if session is not None:
                 run_row = await session.get(Run, run_id)
                 if run_row is not None:
-                    run_row.agents_used = json.dumps(selected_ids)
+                    run_row.agents_used = json.dumps(agent_ids)
 
-        # ── Phase 4: reviewer quality gate (if reviewer agent present) ─────────
-        if reviewer_cfg:
-            await self._run_reviewer(reviewer_cfg, brief, tasks, run_id)
+        # Final file check
+        count, files = await self._git_status()
+        await self._emit_files(count, files)
 
-    # ── Phase 1: run planners in parallel ─────────────────────────────────────
+        summary = self._task_list.summary()
+        await self._emit_log("manager", f"Run complete — {summary}")
+        await self._clog("run_complete", f"Task summary: {summary}")
 
-    async def _run_planners(self, brief: str, planners: list[dict]) -> dict[str, str]:
-        results: dict[str, str] = {}
+    # ── agent loop ─────────────────────────────────────────────────────────────
 
-        async def run_one(agent_cfg: dict) -> None:
-            agent_id = agent_cfg["id"]
-            agent    = self._agents.get(agent_id)
-            if not agent:
-                return
-
-            await self._emit_agent(agent_id, "thinking")
-            await self._emit_log(agent_id, "Drafting planning spec…")
-
-            if _is_scout(agent_cfg):
-                prompt = (
-                    f"Project brief: {brief}\n\n"
-                    "You are a Scout. Research the project context, identify relevant patterns, "
-                    "and provide structured findings that will guide the implementation team.\n\n"
-                    "Output format (use these exact headers):\n"
-                    "## Research Summary\n[key findings — what the brief implies technically]\n\n"
-                    "## Relevant Patterns\n[patterns and conventions the team should follow]\n\n"
-                    "## Recommendations\n[specific, actionable technical recommendations]\n\n"
-                    "## Potential Issues\n[gotchas, edge cases, and risks to watch]\n\n"
-                    "Be specific and actionable. Do NOT write implementation code."
-                )
-            else:
-                prompt = (
-                    f"Project brief: {brief}\n\n"
-                    "Produce your planning spec for this project. "
-                    "Be specific, actionable, and stay within your domain. "
-                    "Your output will be given to the Manager to build the final task plan."
-                )
-
-            _plan_res = await agent.run(prompt)
-            asyncio.create_task(self._deduct_credits(_plan_res))
-            output = _plan_res["content"]
-            results[agent_id] = output
-
-            await self._bus_send(agent_id, "manager", _truncate(output, 120))
-            await self._emit_agent(agent_id, "done")
-            await self._emit_log(agent_id, "Spec submitted to Manager.")
-
-        await asyncio.gather(*(run_one(a) for a in planners))
-        return results
-
-    # ── Phase 3: run a single executor ────────────────────────────────────────
-
-    async def _run_executor(
+    async def _run_agent_loop(
         self,
-        agent_cfg: dict,
-        tasks: list,
+        agent_id: str,
         brief: str,
-        planner_outputs: dict[str, str],
-        run_id: str = "",
-        retry_for_feedback: bool = False,
+        run_id: str,
     ) -> None:
-        agent_id = agent_cfg["id"]
-        short    = agent_id.upper()[:3]
-        agent    = self._agents.get(agent_id)
+        agent = self._agents.get(agent_id)
         if not agent:
             return
 
-        my_tasks = [t for t in tasks if t.get("tag") == short]
-        if not my_tasks:
-            return
+        await self._emit_agent(agent_id, "idle")
+        await self._emit_log(agent_id, "Agent online — waiting for tasks")
+        await self._clog("agent_online", f"{agent_id} started agent loop")
 
-        await self._emit_agent(agent_id, "thinking")
-        log_prefix = "Re-running with reviewer feedback." if retry_for_feedback else f"Received {len(my_tasks)} task(s) from Manager."
-        await self._emit_log(agent_id, log_prefix)
+        if agent_id not in self._agent_written_files:
+            self._agent_written_files[agent_id] = []
 
-        # Build context: brief + planner specs
-        context_parts = [f"Project context: {brief[:300]}"]
-        if planner_outputs:
-            specs = "\n\n".join(
-                f"[{aid.upper()} SPEC]\n{_truncate(out, 400)}"
-                for aid, out in planner_outputs.items()
-            )
-            context_parts.append(f"Planning specs from earlier phase:\n{specs}")
+        while self._team_active:
+            # Check for cancellation
+            if self._cancel_requested:
+                break
 
-        # Include mailbox inbox (e.g. reviewer feedback from previous attempt)
-        unread = self._mailbox.unread(agent_id)
-        if unread:
-            inbox_text = "\n".join(
-                f"[{m['type'].upper()} from {m['from']}]: {m['content']}"
-                for m in unread
-            )
-            context_parts.append(f"Messages in your mailbox:\n{inbox_text}")
-            if retry_for_feedback:
-                await self._emit_log(agent_id, f"Reviewer feedback received — revising output.")
+            # Read unread mailbox messages for context
+            unread = self._mailbox.unread(agent_id)
+            mailbox_context = ""
+            if unread:
+                mailbox_context = "\n".join(
+                    f"[{m['type'].upper()} from {m['from']}]: {m['content']}"
+                    for m in unread
+                )
 
-        context = "\n\n".join(context_parts)
+            # Try to claim a task
+            task = self._task_list.claim_task(agent_id)
+            if task is None:
+                if self._task_list.is_all_done():
+                    break
+                await asyncio.sleep(1)
+                continue
 
-        if agent_id not in self._executor_files:
-            self._executor_files[agent_id] = []
-
-        for task in my_tasks:
-            await self._emit_log(agent_id, f"Working on: {task['title']}")
+            task_id = task["id"]
             await self._emit_agent(agent_id, "coding")
+            await self._emit_log(agent_id, f"Claimed: {task['title']}")
+            await self._clog("task_claimed", f"{agent_id} claimed '{task['title']}'", {
+                "agent": agent_id, "task": task_id,
+            })
 
-            prompt    = f"Task: {task['title']}\n\n{context}{_FILE_FORMAT_INSTRUCTION}"
+            self._task_list.start_task(task_id, agent_id)
+
+            # Build the task prompt
+            context_parts = [f"Project brief: {brief[:300]}"]
+            if mailbox_context:
+                context_parts.append(f"Mailbox messages:\n{mailbox_context}")
+
+            # Include previously written file summaries for cross-agent awareness
+            file_summaries: list[str] = []
+            for aid, paths in self._agent_written_files.items():
+                for p in paths[-5:]:  # last 5 files per agent
+                    file_summaries.append(f"  {aid} wrote: {p}")
+            if file_summaries:
+                context_parts.append("Files written by other agents:\n" + "\n".join(file_summaries))
+
+            context = "\n\n".join(context_parts)
+
+            prompt = (
+                f"Task: {task['title']}\n"
+                f"Description: {task.get('description', '')}\n\n"
+                f"{context}\n\n"
+                "Write the complete implementation for this task. "
+                "Output each file using this format:\n\n"
+                "--- FILE: relative/path/from/project/root ---\n"
+                "complete file contents here\n"
+                "--- END FILE ---\n\n"
+                "Write COMPLETE, RUNNABLE code. Multiple files are allowed — "
+                "write each as its own FILE block. Do not use placeholders or TODOs."
+            )
+
             _exec_res = await agent.run(prompt)
             asyncio.create_task(self._deduct_credits(_exec_res))
-            result  = _exec_res["content"]
-            summary = _truncate(result)
+            result = _exec_res["content"]
 
-            # Store raw output for reviewer
-            self._executor_outputs[agent_id] = result
+            # Parse FILE blocks from agent output
+            parsed_files: list[tuple[str, str]] = []
+            for match in _FILE_RE.finditer(result):
+                rel_path = match.group(1).strip()
+                content  = match.group(2).strip()
+                if rel_path:
+                    parsed_files.append((rel_path, content))
 
-            # Write files
-            written = await self._write_agent_files(agent_id, result, run_id)
-            self._executor_files[agent_id].extend(written)
+            # Write parsed files to disk
+            written: list[str] = []
+            if parsed_files:
+                written = await self._write_files_from_parsed(agent_id, parsed_files, run_id)
+                self._agent_written_files[agent_id].extend(written)
 
             if written:
                 await self._emit_log(agent_id, f"Wrote {len(written)} file(s): {', '.join(written[:3])}")
-                count, names = await self._git_status()
-                await self._emit_files(count, names)
                 # Auto-commit after each task
                 await self._auto_commit(agent_id, task["title"], written)
 
+            # Send a summary to manager via mailbox
+            summary = _truncate(result, 150)
             await self._bus_send(agent_id, "manager", f"Completed '{task['title']}': {summary}")
-            await self._emit_task_done(task["id"])
+
+            # Mark task complete
+            self._task_list.complete_task(task_id, agent_id, written)
+            await self._emit_task_done(task_id)
+
+            await self._emit_agent(agent_id, "done")
+            await self._clog("task_completed", f"{agent_id} completed '{task['title']}'", {
+                "agent": agent_id, "task": task_id, "files": len(written),
+            })
+
             await asyncio.sleep(0.3)
 
-        await self._emit_agent(agent_id, "done")
-        await self._emit_log(agent_id, "All tasks complete.")
-
-    # ── Phase 4: reviewer quality gate ────────────────────────────────────────
-
-    async def _run_reviewer(
-        self,
-        reviewer_cfg: dict,
-        brief: str,
-        tasks: list,
-        run_id: str,
-    ) -> None:
-        reviewer = self._agents.get("reviewer")
-        if not reviewer:
-            return
-
-        await self._emit_agent("reviewer", "thinking")
-        await self._emit_log("reviewer", "Phase 4 — reviewing all executor output…")
-        await self._clog("reviewer_started", "Phase 4: reviewer beginning quality gate")
-        await self.sio.emit("reviewer_started", {})
-
-        review_result = await self._do_review(reviewer, brief, tasks)
-
-        approved    = review_result.get("approved", True)
-        summary     = review_result.get("summary", "")
-        issues      = review_result.get("issues", [])
-
-        await self._emit_log("reviewer", f"{'APPROVED' if approved else 'NEEDS REVISION'}: {summary}")
-        await self.sio.emit("reviewer_result", {
-            "approved": approved,
-            "summary":  summary,
-            "issues":   issues,
-        })
-
-        if approved:
-            await self._emit_agent("reviewer", "done")
-            await self._clog("reviewer_approved", summary)
-            self._mailbox.send("reviewer", "manager", summary, "approval")
-        else:
-            await self._clog("reviewer_rejected", summary, {"issue_count": str(len(issues))})
-
-            # Group issues by responsible agent
-            agent_issues: dict[str, list[dict]] = {}
-            for issue in issues:
-                responsible = issue.get("agent", "")
-                if responsible and responsible in self._executor_files:
-                    agent_issues.setdefault(responsible, []).append(issue)
-
-            # Send feedback to each affected agent via mailbox
-            for agent_id, agent_issue_list in agent_issues.items():
-                feedback_lines = [
-                    f"- [{i.get('severity','Major')}] {i.get('file','')}: {i.get('issue','')}"
-                    for i in agent_issue_list
-                ]
-                feedback = "Reviewer feedback — please revise:\n" + "\n".join(feedback_lines)
-                msg = self._mailbox.send("reviewer", agent_id, feedback, "feedback")
-                await self._emit_mailbox_msg(msg)
-                await self._emit_log("reviewer", f"Sent feedback to {agent_id} ({len(agent_issue_list)} issue(s))")
-                await self._clog("feedback_sent", f"Reviewer sent feedback to {agent_id}", {
-                    "agent": agent_id, "issues": str(len(agent_issue_list)),
-                })
-
-            # One retry for affected agents
-            affected = list(agent_issues.keys())
-            if affected:
-                await self._emit_log("reviewer", f"Retry: {', '.join(affected)}")
-                await self._clog("retry_started", f"Retry for: {', '.join(affected)}")
-                await self.sio.emit("reviewer_retry", {"agents": affected})
-
-                # Find the original agent configs
-                affected_cfgs = [
-                    a for a in self.config.agents
-                    if a.get("id") in affected
-                ]
-                # Re-run the config we have (planner_outputs stored separately)
-                # We need to pass the same brief and tasks — use empty planner_outputs for retry
-                async def staggered_retry(agent_cfg: dict, delay: float) -> None:
-                    await asyncio.sleep(delay)
-                    await self._run_executor(
-                        agent_cfg, tasks, brief, {},
-                        run_id, retry_for_feedback=True,
-                    )
-
-                await asyncio.gather(*(staggered_retry(a, i * 0.5) for i, a in enumerate(affected_cfgs)))
-
-            await self._emit_agent("reviewer", "done")
-            await self._emit_log("reviewer", "Review cycle complete.")
-
-    async def _do_review(
-        self,
-        reviewer: BaseAgent,
-        brief: str,
-        tasks: list,
-    ) -> dict:
-        """Build reviewer context and call the reviewer model. Returns parsed JSON."""
-        # Build file summary (truncated)
-        file_sections: list[str] = []
-        for agent_id, file_paths in self._executor_files.items():
-            for path in file_paths:
-                full_path = self._cwd / path
-                try:
-                    content = full_path.read_text(encoding="utf-8")
-                    preview = content[:600] + ("…" if len(content) > 600 else "")
-                    file_sections.append(f"[FILE: {path}] (by {agent_id})\n{preview}")
-                except OSError:
-                    file_sections.append(f"[FILE: {path}] (by {agent_id}) — could not read")
-
-        files_text = "\n\n".join(file_sections) if file_sections else "(no files written)"
-
-        # Build executor summaries (truncated)
-        exec_summaries = "\n\n".join(
-            f"[{agent_id.upper()} OUTPUT]\n{_truncate(output, 300)}"
-            for agent_id, output in self._executor_outputs.items()
-        )
-
-        task_list = "\n".join(
-            f"- [{t.get('tag','')}] {t.get('title','')} (done={t.get('done',False)})"
-            for t in tasks
-        )
-
-        prompt = f"""You are reviewing the output of a multi-agent coding run.
-
-Brief: {brief[:400]}
-
-Tasks assigned:
-{task_list}
-
-Files written:
-{files_text}
-
-Executor summaries:
-{exec_summaries or "(none)"}
-
-Review checklist:
-1. Do all files contain complete, runnable code (no placeholders, no TODOs, no "...")?
-2. Do the files cover all assigned tasks?
-3. Are there obvious bugs, missing imports, or broken logic?
-4. Are external inputs validated? Are secrets hardcoded?
-5. Do the files follow consistent naming and style conventions?
-
-Return ONLY valid JSON — no prose, no markdown fences:
-{{
-  "approved": true,
-  "summary": "one-sentence verdict",
-  "issues": []
-}}
-
-If issues exist, set approved to false and list them:
-{{
-  "approved": false,
-  "summary": "one-sentence verdict",
-  "issues": [
-    {{"file": "path/to/file", "issue": "description", "severity": "Blocker|Major|Minor", "agent": "agent_id"}}
-  ]
-}}
-"""
-        _rev_res = await reviewer.run(prompt)
-        asyncio.create_task(self._deduct_credits(_rev_res))
-        raw = _rev_res["content"]
-
-        # Extract JSON
-        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if json_match:
-            try:
-                result = json.loads(json_match.group())
-                # Validate structure
-                result.setdefault("approved", True)
-                result.setdefault("summary", "Review complete.")
-                result.setdefault("issues", [])
-                return result
-            except json.JSONDecodeError:
-                pass
-
-        # Fallback: if we can't parse JSON, assume approved to avoid blocking the run
-        return {"approved": True, "summary": "Review complete (output not parseable).", "issues": []}
+        await self._emit_agent(agent_id, "idle")
+        await self._emit_log(agent_id, "Agent finished — no more tasks")
+        await self._clog("agent_finished", f"{agent_id} exited agent loop")

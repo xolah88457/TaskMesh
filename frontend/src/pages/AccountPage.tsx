@@ -14,6 +14,13 @@ interface Profile {
   created_at: string | null
 }
 
+interface ZenSummary {
+  month_spent_cents: number
+  lifetime_spent_cents: number
+  balance_cents: number
+  month_run_count: number
+}
+
 // ── Shared input style ─────────────────────────────────────────────────────────
 const inputCls = 'w-full text-xs px-3 py-2 rounded focus:outline-none'
 const inputStyle = {
@@ -69,14 +76,9 @@ export default function AccountPage() {
   const [pwErr, setPwErr]               = useState(false)
   const [pwSaving, setPwSaving]         = useState(false)
 
-  // API key
-  const [apiKeyHasKey, setApiKeyHasKey]   = useState(false)
-  const [apiKeyPreview, setApiKeyPreview] = useState('')
-  const [apiKeyInput, setApiKeyInput]     = useState('')
-  const [apiKeyShow, setApiKeyShow]       = useState(false)
-  const [apiKeyMsg, setApiKeyMsg]         = useState('')
-  const [apiKeyErr, setApiKeyErr]         = useState(false)
-  const [apiKeySaving, setApiKeySaving]   = useState(false)
+  // Zen usage summary
+  const [zenSummary, setZenSummary]         = useState<ZenSummary | null>(null)
+  const [zenLoading, setZenLoading]         = useState(true)
 
   // Delete
   const [deleteConfirm, setDeleteConfirm] = useState('')
@@ -92,13 +94,11 @@ export default function AccountPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-    authFetch('/api/account/apikey')
+    authFetch('/api/account/zen-summary')
       .then(r => r.json())
-      .then((d: { has_key: boolean; preview: string }) => {
-        setApiKeyHasKey(d.has_key)
-        setApiKeyPreview(d.preview)
-      })
+      .then((d: ZenSummary) => setZenSummary(d))
       .catch(() => {})
+      .finally(() => setZenLoading(false))
   }, [authFetch])
 
   // ── Save name ──────────────────────────────────────────────────────────────
@@ -157,38 +157,6 @@ export default function AccountPage() {
       setProfile(p => p ? { ...p, has_password: true } : p)
     } catch { setPwMsg('Network error'); setPwErr(true) }
     finally { setPwSaving(false) }
-  }
-
-  // ── API key ────────────────────────────────────────────────────────────────
-  const saveApiKey = async () => {
-    if (!apiKeyInput.trim()) { setApiKeyMsg('Enter a key first.'); setApiKeyErr(true); return }
-    setApiKeyMsg(''); setApiKeyErr(false); setApiKeySaving(true)
-    try {
-      const r = await authFetch('/api/account/apikey', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: apiKeyInput.trim() }),
-      })
-      const d = await r.json()
-      if (!r.ok) { setApiKeyMsg(d.detail ?? 'Failed'); setApiKeyErr(true); return }
-      setApiKeyHasKey(true)
-      setApiKeyPreview(d.preview)
-      setApiKeyInput('')
-      setApiKeyMsg('Key saved.')
-    } catch { setApiKeyMsg('Network error'); setApiKeyErr(true) }
-    finally { setApiKeySaving(false) }
-  }
-
-  const removeApiKey = async () => {
-    setApiKeyMsg(''); setApiKeyErr(false); setApiKeySaving(true)
-    try {
-      await authFetch('/api/account/apikey', { method: 'DELETE' })
-      setApiKeyHasKey(false)
-      setApiKeyPreview('')
-      setApiKeyInput('')
-      setApiKeyMsg('Key removed.')
-    } catch { setApiKeyMsg('Network error'); setApiKeyErr(true) }
-    finally { setApiKeySaving(false) }
   }
 
   // ── Delete account ─────────────────────────────────────────────────────────
@@ -346,81 +314,31 @@ export default function AccountPage() {
             <StatusMsg msg={pwMsg} isError={pwErr} />
           </div>
 
-          {/* ── Provider API key ── */}
-          <SectionHeader title="Provider API key" />
+          {/* ── Usage & Billing ── */}
+          <SectionHeader title="Usage & Billing" />
           <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
-            <p className="text-xs mb-1" style={{ color: 'var(--c-text-2)' }}>
-              Your personal <span style={{ color: 'var(--c-text-1)' }}>OpenCode Go</span> API key.
-              Used instead of the server key when running agents.
-            </p>
-            <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-4)' }}>
-              Get yours at{' '}
-              <a href="https://opencode.ai/zen" target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--c-accent)', textDecoration: 'underline' }}>
-                opencode.ai/zen
-              </a>
-              {' '}→ Go → copy API key.
-              {' '}In the future this will be configured automatically.
-            </p>
-
-            {/* Current status */}
-            <div className="flex items-center gap-2 mb-3">
-              <span
-                className="text-[10px] px-2 py-0.5 rounded"
-                style={apiKeyHasKey
-                  ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
-                  : { color: 'var(--c-text-4)', border: '1px solid var(--c-border)' }
-                }
-              >
-                {apiKeyHasKey ? `✓ Key set (${apiKeyPreview})` : 'No key configured — using server key'}
-              </span>
-            </div>
-
-            {/* Input + actions */}
-            <div className="flex gap-2 items-center">
-              <div className="relative flex-1">
-                <input
-                  className={inputCls + ' pr-8'}
-                  style={inputStyle}
-                  type={apiKeyShow ? 'text' : 'password'}
-                  value={apiKeyInput}
-                  onChange={e => setApiKeyInput(e.target.value)}
-                  placeholder={apiKeyHasKey ? 'Enter new key to replace…' : 'Paste your OpenCode Go key…'}
-                  onKeyDown={e => { if (e.key === 'Enter') saveApiKey() }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setApiKeyShow(v => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px]"
-                  style={{ color: 'var(--c-text-4)' }}
-                  tabIndex={-1}
-                  title={apiKeyShow ? 'Hide' : 'Show'}
-                >
-                  {apiKeyShow ? '🙈' : '👁'}
-                </button>
+            {zenLoading ? (
+              <p className="text-xs" style={{ color: 'var(--c-text-4)' }}>Loading usage data…</p>
+            ) : zenSummary ? (
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <span style={{ color: 'var(--c-text-3)' }}>Spent this month</span>
+                  <span style={{ color: 'var(--c-text-1)' }}>${(zenSummary.month_spent_cents / 100).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span style={{ color: 'var(--c-text-3)' }}>Runs this month</span>
+                  <span style={{ color: 'var(--c-text-1)' }}>{zenSummary.month_run_count}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span style={{ color: 'var(--c-text-3)' }}>Lifetime spent</span>
+                  <span style={{ color: 'var(--c-text-1)' }}>${(zenSummary.lifetime_spent_cents / 100).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-xs pt-2" style={{ borderTop: '1px solid var(--c-border)' }}>
+                  <span style={{ color: 'var(--c-text-3)' }}>Remaining balance</span>
+                  <span className="font-bold" style={{ color: 'var(--c-accent)' }}>${(zenSummary.balance_cents / 100).toFixed(2)}</span>
+                </div>
               </div>
-              <button
-                onClick={saveApiKey}
-                disabled={apiKeySaving || !apiKeyInput.trim()}
-                className="text-xs px-3 py-2 rounded font-bold disabled:opacity-40 shrink-0"
-                style={{ background: 'var(--c-accent)', color: '#000' }}
-              >
-                {apiKeySaving ? '…' : 'Save'}
-              </button>
-              {apiKeyHasKey && (
-                <button
-                  onClick={removeApiKey}
-                  disabled={apiKeySaving}
-                  className="text-xs px-3 py-2 rounded disabled:opacity-40 shrink-0"
-                  style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-3)' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-            <StatusMsg msg={apiKeyMsg} isError={apiKeyErr} />
+            ) : null}
           </div>
 
           {/* ── Connected accounts ── */}

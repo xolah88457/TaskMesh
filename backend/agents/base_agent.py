@@ -23,17 +23,46 @@ from anthropic import AsyncAnthropic
 #     )
 # ── End OpenRouter ─────────────────────────────────────────────────────────────
 
-# Thinking budgets disabled for OpenCode Go — the extra_body format is provider-specific
-# and OpenCode Go does not document a supported parameter for it.
-# Will re-enable with confirmed values when switching to OpenRouter.
+# Thinking budgets disabled — provider-specific extra_body format not supported.
 THINKING_MODEL_IDS: set[str] = set()
 
-# Models that use the Anthropic Messages API (/v1/messages) instead of
-# the OpenAI Chat Completions API (/v1/chat/completions).
-# The Anthropic SDK is used automatically for these model IDs.
+# Models that use the Anthropic Messages API (/v1/messages).
 ANTHROPIC_MODEL_IDS: set[str] = {
     "minimax-m2.7",
     "minimax-m2.5",
+    "minimax-m2.5-free",
+    "claude-haiku-4-5",
+    "claude-opus-4-1",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-opus-4-7",
+    "claude-sonnet-4",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+}
+
+# Models that use the OpenAI Responses API.
+# NOTE: responses.create() requires openai >= 1.59.0 — currently on 1.57.0.
+# For now, GPT models fall through to the Chat Completions path.
+# Uncomment the dispatch in run() after upgrading the openai SDK.
+GPT_MODEL_IDS: set[str] = {
+    "gpt-5",
+    "gpt-5-codex",
+    "gpt-5-nano",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex-mini",
+    "gpt-5.2",
+    "gpt-5.2-codex",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.4-pro",
+    "gpt-5.5",
+    "gpt-5.5-pro",
 }
 
 
@@ -43,7 +72,7 @@ class BaseAgent:
         name: str,
         model: str,
         system_prompt: str,
-        base_url: str = "https://opencode.ai/zen/go/v1",
+        base_url: str = "https://opencode.ai/zen/v1",
         api_key: str = "",
         temperature: float = 0.7,
         top_p: float = 0.9,
@@ -74,7 +103,7 @@ class BaseAgent:
         if self._anthropic_client is None:
             key = self._api_key or os.environ.get("OPENCODE_GO_API_KEY", "no-key-set")
             # Anthropic SDK appends /v1/messages to base_url.
-            # OpenCode Go OpenAI base is .../zen/go/v1 → strip /v1 for Anthropic.
+            # Strip /v1 suffix so Anthropic's own /v1/messages is used.
             base = self._base_url[:-3] if self._base_url.endswith("/v1") else self._base_url
             self._anthropic_client = AsyncAnthropic(api_key=key, base_url=base)
         return self._anthropic_client
@@ -96,11 +125,36 @@ class BaseAgent:
             "model":             self.model,
         }
 
+    async def _run_responses(self, user_message: str) -> dict:
+        """Call a GPT model via the OpenAI Responses API.
+        
+        NOTE: responses.create() requires openai >= 1.59.0 — currently on 1.57.0.
+        GPT models fall through to Chat Completions until SDK is upgraded.
+        """
+        # TODO: after `pip install openai --upgrade`:
+        # response = await self._get_client().responses.create(
+        #     model=self.model,
+        #     input=user_message,
+        #     instructions=self.system_prompt,
+        #     temperature=self.temperature,
+        #     max_output_tokens=self.max_tokens,
+        # )
+        # usage = response.usage
+        # return {
+        #     "content":           response.output_text,
+        #     "prompt_tokens":     usage.input_tokens  if usage else 0,
+        #     "completion_tokens": usage.output_tokens if usage else 0,
+        #     "model":             self.model,
+        # }
+        raise NotImplementedError("Responses API requires openai >= 1.59.0")
+
     async def run(self, user_message: str) -> dict:
         """Call the LLM and return content + token usage.
 
-        Dispatches to the Anthropic Messages API for models in ANTHROPIC_MODEL_IDS,
-        and to the OpenAI Chat Completions API for all others.
+        Dispatches based on model ID:
+          - ANTHROPIC_MODEL_IDS → Anthropic Messages API
+          - GPT_MODEL_IDS       → Chat Completions (Responses API after SDK upgrade)
+          - Everything else      → Chat Completions
 
         Returns:
             {
@@ -112,6 +166,9 @@ class BaseAgent:
         """
         if self.model in ANTHROPIC_MODEL_IDS:
             return await self._run_anthropic(user_message)
+
+        # GPT_MODEL_IDS dispatch — would call _run_responses() after SDK upgrade.
+        # Currently falls through to chat completions (same path).
 
         extra_body: dict = {}
 

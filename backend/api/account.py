@@ -8,7 +8,6 @@ Endpoints:
   PUT  /api/account/password         — change password (requires current password)
   DELETE /api/account                — permanently delete account + all data
 """
-import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,8 +16,6 @@ from pydantic import BaseModel
 from ..auth.auth import require_auth, hash_password, verify_password, create_token
 
 router = APIRouter(prefix="/account")
-
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
 
 # ── Request bodies ─────────────────────────────────────────────────────────────
@@ -35,10 +32,6 @@ class UpdateEmailRequest(BaseModel):
 class UpdatePasswordRequest(BaseModel):
     current_password: str
     new_password: str
-
-
-class SetApiKeyRequest(BaseModel):
-    key: str
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -177,62 +170,58 @@ async def update_password(body: UpdatePasswordRequest, user: dict = Depends(requ
     return {"status": "updated"}
 
 
-@router.get("/apikey")
-async def get_api_key(user: dict = Depends(require_auth)):
-    """Return whether the user has an OpenCode Go API key set, plus a masked preview."""
+@router.get("/zen-summary")
+async def get_zen_summary(user: dict = Depends(require_auth)):
+    """Return monthly and lifetime spend summaries from ZenUsage."""
+    from sqlalchemy import select, func
     from ..db.session import get_session
-    from ..db.models import User
+    from ..db.models import ZenUsage, UserCredits
 
     user_id = user.get("sub", "")
+    year_month = datetime.now(timezone.utc).strftime("%Y-%m")
+
     async with get_session() as session:
         if session is None:
-            return {"has_key": False, "preview": ""}
-        user_row = await session.get(User, user_id)
-        if not user_row or not user_row.opencode_api_key:
-            return {"has_key": False, "preview": ""}
-        k = user_row.opencode_api_key
-        preview = f"{k[:4]}...{k[-4:]}" if len(k) >= 8 else "****"
-        return {"has_key": True, "preview": preview}
+            return {
+                "month_spent_cents": 0,
+                "lifetime_spent_cents": 0,
+                "balance_cents": 0,
+                "month_run_count": 0,
+            }
 
+        # Monthly spend
+        month_result = await session.execute(
+            select(func.sum(ZenUsage.cost_cents))
+            .where(ZenUsage.user_id == user_id)
+            .where(func.to_char(ZenUsage.created_at, "YYYY-MM") == year_month)
+        )
+        month_spent = month_result.scalar() or 0
 
-@router.put("/apikey")
-async def set_api_key(body: SetApiKeyRequest, user: dict = Depends(require_auth)):
-    """Save or replace the user's OpenCode Go API key."""
-    from ..db.session import get_session
-    from ..db.models import User
+        # Lifetime spend
+        lifetime_result = await session.execute(
+            select(func.sum(ZenUsage.cost_cents))
+            .where(ZenUsage.user_id == user_id)
+        )
+        lifetime_spent = lifetime_result.scalar() or 0
 
-    key = body.key.strip()
-    if not key:
-        raise HTTPException(status_code=400, detail="Key cannot be empty")
+        # Monthly distinct run count
+        run_count_result = await session.execute(
+            select(func.count(func.distinct(ZenUsage.run_id)))
+            .where(ZenUsage.user_id == user_id)
+            .where(func.to_char(ZenUsage.created_at, "YYYY-MM") == year_month)
+        )
+        month_runs = run_count_result.scalar() or 0
 
-    user_id = user.get("sub", "")
-    async with get_session() as session:
-        if session is None:
-            raise HTTPException(status_code=503, detail="Database not configured")
-        user_row = await session.get(User, user_id)
-        if user_row is None:
-            raise HTTPException(status_code=404, detail="User not found")
-        user_row.opencode_api_key = key
+        # Current balance
+        creds = await session.get(UserCredits, user_id)
+        balance = creds.balance_cents if creds else 0
 
-    k = key
-    preview = f"{k[:4]}...{k[-4:]}" if len(k) >= 8 else "****"
-    return {"status": "saved", "preview": preview}
-
-
-@router.delete("/apikey")
-async def remove_api_key(user: dict = Depends(require_auth)):
-    """Remove the user's stored OpenCode Go API key."""
-    from ..db.session import get_session
-    from ..db.models import User
-
-    user_id = user.get("sub", "")
-    async with get_session() as session:
-        if session is None:
-            raise HTTPException(status_code=503, detail="Database not configured")
-        user_row = await session.get(User, user_id)
-        if user_row:
-            user_row.opencode_api_key = None
-    return {"status": "removed"}
+    return {
+        "month_spent_cents": int(month_spent),
+        "lifetime_spent_cents": int(lifetime_spent),
+        "balance_cents": balance,
+        "month_run_count": month_runs,
+    }
 
 
 @router.delete("")
@@ -240,7 +229,7 @@ async def delete_account(user: dict = Depends(require_auth)):
     """Permanently delete the account and all associated data."""
     from sqlalchemy import delete as sql_delete
     from ..db.session import get_session
-    from ..db.models import User, UserUsage, UserCredits, UserGitHub, Run, RunFile
+    from ..db.models import User, UserUsage, UserCredits, UserGitHub, Run, ZenUsage
 
     user_id = user.get("sub", "")
 
@@ -254,6 +243,7 @@ async def delete_account(user: dict = Depends(require_auth)):
         await session.execute(sql_delete(UserUsage).where(UserUsage.user_id == user_id))
         await session.execute(sql_delete(UserCredits).where(UserCredits.user_id == user_id))
         await session.execute(sql_delete(UserGitHub).where(UserGitHub.user_id == user_id))
+        await session.execute(sql_delete(ZenUsage).where(ZenUsage.user_id == user_id))
 
         user_row = await session.get(User, user_id)
         if user_row:

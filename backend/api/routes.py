@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -8,12 +10,15 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ..auth.auth import require_auth
-from ..core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER, save_config
+from ..core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER, save_config, get_project_dir
 
 router = APIRouter()
 _orchestrator = None
 
 _AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "").lower() in ("1", "true", "yes")
+
+# In-memory upload token store: token → {user_id, upload_dir, files, manifest}
+_upload_tokens: dict[str, dict] = {}
 
 
 def set_orchestrator(orch):
@@ -23,6 +28,54 @@ def set_orchestrator(orch):
 
 class ProjectBrief(BaseModel):
     brief: str
+    upload_token: str | None = None
+
+
+class UploadFileItem(BaseModel):
+    filename: str
+    content: str  # base64-encoded
+
+
+class UploadRequest(BaseModel):
+    files: list[UploadFileItem]
+
+
+@router.post("/upload")
+async def upload_files(body: UploadRequest, user: dict = Depends(require_auth)):
+    """Accept uploaded design files, store them, return a token for start_project."""
+    from ..core.file_upload import store_files, build_file_manifest
+
+    user_id = user.get("sub", "anonymous")
+    files_data: list[tuple[str, bytes]] = []
+    for item in body.files:
+        try:
+            content = base64.b64decode(item.content)
+        except Exception:
+            return {"error": f"Invalid base64 for {item.filename}"}
+        files_data.append((item.filename, content))
+
+    upload_token = str(uuid.uuid4())
+    project_dir = get_project_dir()
+    upload_dir = project_dir / "uploads" / upload_token
+
+    try:
+        stored = store_files(upload_dir, files_data)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    manifest = build_file_manifest(stored)
+    _upload_tokens[upload_token] = {
+        "user_id": user_id,
+        "upload_dir": str(upload_dir),
+        "files": stored,
+        "manifest": manifest,
+    }
+
+    return {
+        "upload_token": upload_token,
+        "files": stored,
+        "manifest": manifest,
+    }
 
 
 @router.post("/start-project")
@@ -34,27 +87,31 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
 
     user_id = user.get("sub", "anonymous")
 
+    # Resolve upload token
+    upload_dir = ""
+    if body.upload_token and body.upload_token in _upload_tokens:
+        token_data = _upload_tokens[body.upload_token]
+        if token_data.get("user_id") == user_id:
+            upload_dir = token_data.get("upload_dir", "")
+
     # Dev bypass — skip billing gate entirely in local dev mode
     if _AUTH_DISABLED or user_id == "dev-user":
         asyncio.create_task(
-            _orchestrator.run(body.brief, user_id=user_id, agent_limit=None, plan="pro")
+            _orchestrator.run(body.brief, user_id=user_id, agent_limit=None, plan="pro",
+                              upload_dir=upload_dir)
         )
         return {"status": "started"}
 
-    # Billing gate + user API key fetch in one session
+    # Billing gate
     from ..db.session import get_session
-    from ..db.models import UserCredits, User
+    from ..db.models import UserCredits
     plan    = "none"
     balance = 0
-    api_key = ""
     async with get_session() as session:
         if session is not None:
             credits  = await session.get(UserCredits, user_id)
             plan     = credits.plan          if credits else "none"
             balance  = credits.balance_cents if credits else 0
-            user_row = await session.get(User, user_id)
-            if user_row and user_row.opencode_api_key:
-                api_key = user_row.opencode_api_key
 
     if plan == "none":
         return {"error": "no_subscription"}
@@ -63,7 +120,8 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
 
     agent_limit = 3 if plan == "starter" else None
     asyncio.create_task(
-        _orchestrator.run(body.brief, user_id=user_id, agent_limit=agent_limit, plan=plan, api_key=api_key)
+        _orchestrator.run(body.brief, user_id=user_id, agent_limit=agent_limit, plan=plan,
+                          api_key="", upload_dir=upload_dir)
     )
     return {"status": "started"}
 
@@ -98,6 +156,12 @@ async def put_config(body: dict[str, Any], user: dict = Depends(require_auth)):
     from ..db.models import UserCredits
     from fastapi import HTTPException
     user_id = user.get("sub", "anonymous")
+
+    # Dev bypass — skip plan gate in local dev mode
+    if _AUTH_DISABLED or user_id == "dev-user":
+        save_config(body)
+        return {"status": "saved"}
+
     async with get_session() as session:
         if session is not None:
             credits = await session.get(UserCredits, user_id)
@@ -116,6 +180,7 @@ async def list_runs(user: dict = Depends(require_auth)):
     from ..db.session import get_session
     from ..db.models import Run
     from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
     user_id = user.get("sub", "anonymous")
     async with get_session() as session:
         if session is None:
@@ -125,6 +190,7 @@ async def list_runs(user: dict = Depends(require_auth)):
             .where(Run.user_id == user_id)
             .order_by(Run.started_at.desc())
             .limit(50)
+            .options(selectinload(Run.files))
         )
         runs = result.scalars().all()
         return [

@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-20 (Model List Overhaul session)
+Last updated: 2026-05-21 (Full Codebase Audit session)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -38,7 +38,7 @@ Credits deplete based on actual LLM token usage after each agent call (not a fix
 fee). The balance display shows a percentage of remaining credits that shrinks as agents
 consume tokens. No dollar amounts are shown for usage anywhere in the application — only
 plan prices and pack costs use dollar values.
-50% of every payment goes to OpenRouter API credits for the user; 50% is profit.
+50% of every payment goes to the user's internal credit balance in TaskMesh for Zen API usage; 50% is profit.
 
 Users with no subscription and $0 balance cannot start runs.
 
@@ -61,26 +61,25 @@ Backend:
   - FastAPI 0.115.5
   - uvicorn 0.32.1 with standard extras
   - python-socketio 5.11.4 (Socket.IO ASGI server)
-  - openai 1.57.0 (used as OpenAI-compatible SDK for OpenCode Go)
+  - openai 1.57.0 (used as OpenAI-compatible SDK for OpenCode Zen)
+  - anthropic >= 0.45.0 (Anthropic Messages API for Claude + MiniMax)
   - python-dotenv 1.0.1
-  - python-jose 3.3.0 (present in requirements.txt but no longer used — kept as dependency)
   - httpx 0.27.0 (OAuth HTTP calls)
   - sqlalchemy[asyncio] 2.0.41
   - asyncpg 0.30.0 (PostgreSQL async driver)
-  - PyJWT (for JWT signing — installed separately, imported as "jwt")
-  - bcrypt (for password hashing — installed separately)
+  - PyJWT >= 2.8.0 (JWT signing, imported as `jwt`)
+  - bcrypt >= 4.0.0 (password hashing)
 
 AI provider (active):
-  OpenCode Go — curated open models via OpenAI-compatible API.
-  Endpoint: https://opencode.ai/zen/go/v1
+  OpenCode Zen — full model catalog via OpenAI-compatible API.
+  Endpoint: https://opencode.ai/zen/v1
   Accessed via the openai Python SDK with a custom base_url.
-  Flat subscription: $5 first month, then $10/month.
-  Auth: OPENCODE_GO_API_KEY env var.
-  Model IDs are short strings: deepseek-v4-pro, kimi-k2.6, qwen3.5-plus, etc.
-  Curated model set: 13 models across 3 tiers — Flagship (6), Balanced (6), Fast (1).
+  Single master API key: OPENCODE_GO_API_KEY env var.
+  Curated model set: 46 models across 3 tiers — Flagship Pro (16), Balanced (22), Budget (8).
   See Section 15 for full pricing/PRO_ONLY_MODELS table.
-  Note: MiniMax M2.7 / M2.5 use Anthropic format (ANTHROPIC_MODEL_IDS in base_agent.py).
-  Note: Thinking budgets disabled — provider-specific extra_body format not supported.
+  Note: Claude models + MiniMax use Anthropic Messages API (ANTHROPIC_MODEL_IDS in base_agent.py).
+  Note: GPT models use Chat Completions (Responses API after openai SDK >= 1.59.0).
+  Note: BYOK (per-user API keys) fully removed — single master Zen key only.
 
 AI provider (next step — code ready but inactive):
   OpenRouter at https://openrouter.ai/api/v1
@@ -135,7 +134,6 @@ MiniMaxClone/                          project root
     auth/
       __init__.py
       auth.py                          JWT create/verify, bcrypt, require_auth dependency
-      clerk.py                         DEPRECATED — not imported anywhere, kept for reference
 
     agents/
       __init__.py
@@ -220,8 +218,9 @@ Never commit .env or .env.local. Use .env.example and .env.local.example as temp
 BACKEND VARIABLES:
 
   OPENCODE_GO_API_KEY
-    Required for LLM calls. Obtained from https://opencode.ai/zen after subscribing to Go.
-    Used by config_loader.py as fallback if agent config does not have an API key.
+    Single master API key for all users. BYOK (per-user keys) was removed.
+    If a user has not set a personal key, the orchestrator falls back to this env var.
+    Obtained from https://opencode.ai/zen after subscribing to Go.
     (Future: replace with OPENROUTER_API_KEY when switching to OpenRouter.)
 
   SECRET_KEY
@@ -332,12 +331,11 @@ Step 2: Set up the backend Python environment
   source venv/bin/activate       (macOS/Linux)
   venv\Scripts\activate          (Windows)
   pip install -r backend/requirements.txt
-  pip install PyJWT bcrypt       (not yet in requirements.txt — install manually)
 
 Step 3: Configure environment
   cp .env.example .env
   Open .env and fill in at minimum:
-    NVIDIA_API_KEY=nvapi-your-key-here
+    OPENCODE_GO_API_KEY=your-zen-key-here
     AUTH_DISABLED=true
     SECRET_KEY=any-random-string-for-dev
 
@@ -1117,7 +1115,7 @@ PUT /api/config is Pro plan only.
 
 Top-level fields:
   sprint: string  — displayed in the header (e.g. "Sprint #1")
-  provider.name: string  — display name (e.g. "NVIDIA NIM")
+  provider.name: string  — display name (e.g. "OpenCode Zen")
   provider.baseURL: string  — OpenAI-compatible API base URL
   provider.apiKey: string  — API key; if empty, fallback to OPENCODE_GO_API_KEY env var
   agents: array of agent config objects
@@ -1194,7 +1192,7 @@ SECTION 13: OPENROUTER INTEGRATION (INACTIVE)
 
 OpenRouter is written but commented out. It is NOT the active provider.
 
-To switch from NVIDIA NIM to OpenRouter:
+To switch from OpenCode Zen to OpenRouter:
 
 Step 1: Set OPENROUTER_API_KEY in .env
 
@@ -1220,7 +1218,7 @@ Step 3: In backend/core/config_loader.py:
   Uncomment the OPENROUTER_BASE_URL and OPENROUTER_DEFAULT_AGENTS lists.
   Replace DEFAULT_BASE_URL with OPENROUTER_BASE_URL.
   Replace DEFAULT_AGENTS model IDs with OPENROUTER equivalents.
-  Change the env var lookup line from NVIDIA_API_KEY to OPENROUTER_API_KEY.
+  Change the env var lookup line from OPENCODE_GO_API_KEY to OPENROUTER_API_KEY.
 
 Note: The MODEL_PRICING table in billing.py already includes OpenRouter equivalents
   for the Pro-only models (deepseek/deepseek-chat, moonshotai/kimi-k2, etc.).
@@ -1401,27 +1399,38 @@ CREDIT DEPLETION:
   absolute dollar values.
 
 MODEL PRICING TABLE (billing.py — cents per 1000 tokens, prompt / completion):
-  DeepSeek V4 Pro   — deepseek-v4-pro   (0.014, 0.028)   [PRO ONLY — Flagship]
-  GLM-5.1           — glm-5.1           (0.010, 0.020)   [PRO ONLY — Flagship]
-  Kimi K2.6         — kimi-k2.6         (0.014, 0.028)   [PRO ONLY — Flagship]
-  MiMo V2.5 Pro     — mimo-v2.5-pro     (0.012, 0.024)   [PRO ONLY — Flagship]
-  MiniMax M2.7      — minimax-m2.7      (0.014, 0.028)   [PRO ONLY — Flagship]
-  Qwen3.6 Plus      — qwen3.6-plus      (0.006, 0.012)   [PRO ONLY — Flagship]
-  DeepSeek V4 Flash — deepseek-v4-flash (0.007, 0.014)   [Starter OK — Balanced]
-  GLM-5             — glm-5             (0.008, 0.016)   [Starter OK — Balanced]
-  Kimi K2.5         — kimi-k2.5         (0.010, 0.020)   [Starter OK — Balanced]
-  MiMo V2.5         — mimo-v2.5         (0.008, 0.016)   [Starter OK — Balanced]
-  MiniMax M2.5      — minimax-m2.5      (0.008, 0.016)   [Starter OK — Balanced]
-  Qwen3.5 Plus      — qwen3.5-plus      (0.004, 0.008)   [Starter OK — Balanced]
-  Nemotron 3 Super  — nemotron-3-super  (0.004, 0.008)   [Starter OK — Fast]
-  DEFAULT (unknown)                      (0.020, 0.020)
+  46 models across 3 tiers. Full table in backend/api/billing.py.
+
+  Flagship / Pro-only (prompt >0.2¢/1K → ~$2/M+):
+    deepseek-v4-pro   (0.014, 0.028) · glm-5.1 (0.010, 0.020) · kimi-k2.6 (0.014, 0.028)
+    mimo-v2.5-pro     (0.012, 0.024) · minimax-m2.7 (0.014, 0.028) · qwen3.6-plus (0.006, 0.012)
+    claude-opus-4-1   (1.500, 7.500) · claude-opus-4-5/4-6/4-7 (0.500, 2.500)
+    claude-sonnet-4/4-5/4-6          (0.300, 1.500)
+    gpt-5/5.1/5.2/5.5                (0.250, 1.000)
+    gpt-5-codex / 5.1-codex / max / 5.2-codex / 5.3-codex (0.300, 1.200)
+    gpt-5.4-pro / gpt-5.5-pro        (0.500, 2.000) · gpt-5.4 (0.250, 1.000)
+    gemini-3.1-pro                    (0.350, 1.400)
+
+  Balanced (Starter OK):
+    deepseek-v4-flash (0.174, 0.348) · glm-5 (0.008, 0.016) · kimi-k2.5 (0.010, 0.020)
+    mimo-v2.5 (0.008, 0.016) · minimax-m2.5 (0.030, 0.240) · qwen3.5-plus (0.004, 0.008)
+    claude-haiku-4-5  (0.100, 0.500)
+    gpt-5.1-codex-mini (0.100, 0.400) · gpt-5.3-codex-spark (0.100, 0.400)
+    gpt-5.4-mini (0.050, 0.200)
+    gemini-3-flash / gemini-3.5-flash (0.015, 0.060)
+
+  Budget (Starter OK):
+    nemotron-3-super (0.010, 0.050) · deepseek-v4-flash-free (0.174, 0.348)
+    big-pickle (0.010, 0.050) · nemotron-3-super-free (0.010, 0.050)
+    minimax-m2.5-free (0.030, 0.240) · gpt-5-nano / gpt-5.4-nano (0.025, 0.100)
+    grok-build-0-1 (0.0005, 0.0010) [unconfirmed]
+
+  DEFAULT (unknown): (0.020, 0.020)
 
 PRO_ONLY_MODELS (frozenset in billing.py):
-  All 6 Flagship models: deepseek-v4-pro, glm-5.1, kimi-k2.6,
-    mimo-v2.5-pro, minimax-m2.7, qwen3.6-plus
-
-STARTER_MODEL_FALLBACK = "deepseek-v4-flash"
-  Applied to any agent whose configured model is in PRO_ONLY_MODELS when plan="starter".
+  26 models total. Threshold: prompt cost > 0.2¢/1K (~$2/M input).
+  All Flagship models + claude-sonnet-* + gpt-5/5.1/5.2 + gpt-*-codex +
+  gpt-5.4-pro/5.5-pro/5.4/5.5 + gemini-3.1-pro.
 
 DEV BYPASS:
   When AUTH_DISABLED=true OR user_id="dev-user":
@@ -1544,7 +1553,7 @@ BACKEND DEPLOYMENT:
     FROM python:3.11-slim
     WORKDIR /app
     COPY backend/requirements.txt .
-    RUN pip install -r requirements.txt && pip install PyJWT bcrypt
+    RUN pip install -r requirements.txt
     COPY . .
     CMD ["python", "-m", "uvicorn", "backend.main:socket_app", "--host", "0.0.0.0", "--port", "8080"]
 
@@ -1913,8 +1922,8 @@ DONE — Dashboard UX & Agent Layout (2026-05-20)
     - Users must explicitly add agents via Settings or "+ Add agents" button
 
 [x] OpenCode API key relabel in Settings
-    - Section title changed from "NVIDIA NIM" to "OpenCode API Key"
-    - Placeholder: "Paste your OpenCode Go or Zen API key…"
+    - Section title changed from "NVIDIA NIM" to "OpenCode Zen API Key"
+    - Placeholder: "Paste your OpenCode Zen API key…"
     - Helper text references opencode.ai/zen
     - Provider name defaults updated in both backend and frontend configs
 
@@ -1954,9 +1963,9 @@ DONE — Model List Overhaul (2026-05-20)
 
 [x] MODEL_GROUPS in SettingsPanel.tsx — 3 categories (removed "Code", renamed "Fast/Small"→"Fast")
 
-[x] MODEL_RECOMMENDATIONS in SettingsPanel.tsx — sampling defaults for all 13 models
+[x] MODEL_RECOMMENDATIONS in SettingsPanel.tsx — sampling defaults for all 46 models
 
-[x] MODEL_PRICING in billing.py — per-token rates for all 13 models, old entries purged
+[x] MODEL_PRICING in billing.py — per-token rates for all 46 models, old entries purged
 
 [x] PRO_ONLY_MODELS in billing.py — all 6 Flagship models (removed OpenRouter equivalents)
 
@@ -1984,11 +1993,13 @@ TODO — External services not yet configured
     Set in .env: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI
     Until done: "Push to GitHub" returns 503
 
-[ ] OpenCode Go API key setup
-    Subscribe at https://opencode.ai/zen → copy API key
-    Set OPENCODE_GO_API_KEY=<key> in .env
-    provider.apiKey in agent-team.config.json is already "" — falls back to env var
-    Until done: all agent runs fail with "no-key-set" auth error
+[x] BYOK (per-user API keys) removed — system uses single master Zen key (2026-05-20)
+    OPENCODE_GO_API_KEY env var is the sole provider key
+    All per-user key infrastructure deleted: User.opencode_api_key column,
+    SetApiKeyRequest model, GET/PUT/DELETE /api/account/apikey endpoints,
+    AccountPage "Provider API key" section
+    Key fetch removed from /api/start-project — always passes api_key=""
+    All agents fall back to the env var via config_loader.py
 
 [ ] Paddle — create 5 products and configure
     See Section 17 for full setup instructions.
@@ -2018,9 +2029,9 @@ NOT NEEDED — Confirmed unnecessary
 [-] Free tier — replaced by subscription-only model.
 [-] PADDLE_PRICE_TEAM — old plan removed, replaced by Starter/Pro.
 [-] statement_timeout flag in Cloud SQL — not available, skip it.
-[-] OpenRouter — code written but commented out. OpenCode Go is active.
+[-] OpenRouter — code written but commented out. OpenCode Zen is active.
 [-] Dollar amounts for balance/usage — replaced by percentage display.
-[-] NVIDIA NIM labels — replaced with "OpenCode Go" / "OpenCode API Key" throughout.
+[-] NVIDIA NIM labels — replaced with "OpenCode Zen" / "OpenCode Zen API Key" throughout.
 [-] PyJWT + bcrypt manual install — now in requirements.txt.
 
 
