@@ -54,3 +54,20 @@ async def create_tables() -> None:
                 await conn.rollback()
             else:
                 raise
+    # Schema migrations — columns added to existing tables after initial
+    # deployment. create_all only creates tables, not new columns on
+    # existing tables. These ALTER TABLEs are idempotent (IF NOT EXISTS).
+    await _run_migrations()
+
+
+async def _run_migrations() -> None:
+    """Run one-off ALTER TABLE migrations for columns added after initial create_all."""
+    if _engine is None:
+        return
+    from sqlalchemy import text
+    async with _engine.begin() as conn:
+        # Added 2026-05-22 — per-user agent config (Pro users)
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS config_json TEXT"
+        ))
+        # Add future column migrations here with a date comment
