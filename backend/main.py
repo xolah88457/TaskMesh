@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -46,7 +47,12 @@ if _cors_env == "*" and not AUTH_DISABLED:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_tables()
+    try:
+        await create_tables()
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "create_tables failed — continuing with existing schema"
+        )
     start_upload_cleanup()          # background task: clean expired uploads every 5 min
     yield
     await _cleanup_upload_tokens()  # final sweep before shutdown

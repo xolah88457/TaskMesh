@@ -6,6 +6,7 @@ Set DATABASE_URL in .env to enable persistence, e.g.:
 
 When DATABASE_URL is not set, all DB operations are no-ops (dev mode).
 """
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -19,6 +20,8 @@ if DATABASE_URL:
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
     _engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
     _AsyncSession = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+
+_logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -42,4 +45,12 @@ async def create_tables() -> None:
         return
     from .models import Base
     async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+        except Exception as e:
+            err_msg = str(e)
+            if "already exists" in err_msg or "duplicate" in err_msg:
+                _logger.info("create_tables: schema exists — %s", err_msg)
+                await conn.rollback()
+            else:
+                raise

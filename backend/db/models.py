@@ -162,7 +162,11 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id              = Column(Integer,     primary_key=True, autoincrement=True)
-    run_id          = Column(String(36),  nullable=False, index=True)
+    # NOTE: do not also set ``index=True`` on run_id / status — the explicit
+    # Index() entries below declare them. Having both produced two definitions
+    # of the same index name in metadata and exploded create_all on Postgres
+    # with DuplicateTableError on redeploy.
+    run_id          = Column(String(36),  nullable=False)
     title           = Column(String(256), nullable=False)
     description     = Column(Text,        nullable=False, default="")
     status          = Column(String(20),  nullable=False, default="available")
@@ -189,7 +193,9 @@ class CoordinatorEvent(Base):
     __tablename__ = "coordinator_events"
 
     id              = Column(Integer,     primary_key=True, autoincrement=True)
-    run_id          = Column(String(36),  nullable=False, index=True)
+    # `index=True` removed — explicit Index() below covers it and the auto-named
+    # version was wastefully creating a second physical index on the same column.
+    run_id          = Column(String(36),  nullable=False)
     event_type      = Column(String(32),  nullable=False)
     # event types: task_created, task_claimed, task_completed, agent_online,
     #   agent_finished, file_locked, file_conflict, auto_commit, run_complete,
@@ -217,7 +223,8 @@ class ActionFile(Base):
     __tablename__ = "action_files"
 
     id           = Column(Integer,     primary_key=True, autoincrement=True)
-    run_id       = Column(String(36),  nullable=False, index=True)
+    # NOTE: no ``index=True`` on run_id — explicit Index() below
+    run_id       = Column(String(36),  nullable=False)
     agent_id     = Column(String(64),  nullable=False)
     task_id      = Column(Integer,     nullable=True)  # references tasks.id when available
     path         = Column(String(512), nullable=False)
@@ -242,8 +249,11 @@ class TaskAcceptance(Base):
     __tablename__ = "task_acceptance"
 
     id         = Column(Integer,     primary_key=True, autoincrement=True)
-    task_id    = Column(String(36),  nullable=False, index=True)  # FK → tasks.id (string handle)
-    run_id     = Column(String(36),  nullable=False, index=True)
+    # NOTE: do not set ``index=True`` on task_id / run_id — explicit
+    # Index() entries below declare them. Duplicate definitions produce
+    # DuplicateTableError on create_all in Postgres (redeploy crash).
+    task_id    = Column(String(36),  nullable=False)  # FK → tasks.id (string handle)
+    run_id     = Column(String(36),  nullable=False)
     criterion  = Column(Text,        nullable=False)
     met        = Column(Boolean,     nullable=False, default=False)
     met_order  = Column(Integer,     nullable=True)               # 1-based order within task
@@ -266,7 +276,8 @@ class ActionTool(Base):
     __tablename__ = "action_tools"
 
     id                = Column(Integer,     primary_key=True, autoincrement=True)
-    run_id            = Column(String(36),  nullable=False, index=True)
+    # NOTE: no ``index=True`` on run_id — explicit Index() below
+    run_id            = Column(String(36),  nullable=False)
     agent_id          = Column(String(64),  nullable=False)
     task_id           = Column(Integer,     nullable=True)
     tool_name         = Column(String(64),  nullable=False, default="llm.call")
