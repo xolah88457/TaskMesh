@@ -208,32 +208,44 @@ async def google_callback(request: Request, code: str, state: str = ""):
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
-        # Exchange code for access token
-        token_resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code":          code,
-                "client_id":     GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri":  redirect_uri,
-                "grant_type":    "authorization_code",
-            },
-            timeout=15,
-        )
+        try:
+            # Exchange code for access token
+            token_resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code":          code,
+                    "client_id":     GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "redirect_uri":  redirect_uri,
+                    "grant_type":    "authorization_code",
+                },
+                timeout=15,
+            )
+        except httpx.HTTPError as exc:
+            _log.exception("Google token exchange: httpx error")
+            raise HTTPException(status_code=502, detail="Failed to reach Google")
         if token_resp.status_code != 200:
             _log.error("Google token exchange failed (status %s): %s", token_resp.status_code, token_resp.text)
-            raise HTTPException(status_code=400, detail="Failed to exchange Google code")
+            raise HTTPException(status_code=502, detail="Failed to exchange Google code")
         token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            _log.error("Google token response missing access_token: %s", token_data)
+            raise HTTPException(status_code=502, detail="Failed to exchange Google code")
 
-        # Get user info from Google
-        userinfo_resp = await client.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {token_data['access_token']}"},
-            timeout=10,
-        )
+        try:
+            # Get user info from Google
+            userinfo_resp = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10,
+            )
+        except httpx.HTTPError as exc:
+            _log.exception("Google userinfo: httpx error")
+            raise HTTPException(status_code=502, detail="Failed to reach Google")
         if userinfo_resp.status_code != 200:
             _log.error("Google userinfo failed (status %s): %s", userinfo_resp.status_code, userinfo_resp.text)
-            raise HTTPException(status_code=400, detail="Failed to get user info from Google")
+            raise HTTPException(status_code=502, detail="Failed to get user info from Google")
         guser = userinfo_resp.json()
 
     google_id = guser.get("id") or guser.get("sub", "")
@@ -329,45 +341,58 @@ async def github_callback(request: Request, code: str, state: str = ""):
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
-        # Exchange code for access token
-        token_resp = await client.post(
-            "https://github.com/login/oauth/access_token",
-            data={
-                "client_id":     GITHUB_AUTH_CLIENT_ID,
-                "client_secret": GITHUB_AUTH_CLIENT_SECRET,
-                "code":          code,
-                "redirect_uri":  redirect_uri,
-            },
-            headers={"Accept": "application/json"},
-            timeout=15,
-        )
+        try:
+            # Exchange code for access token
+            token_resp = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id":     GITHUB_AUTH_CLIENT_ID,
+                    "client_secret": GITHUB_AUTH_CLIENT_SECRET,
+                    "code":          code,
+                    "redirect_uri":  redirect_uri,
+                },
+                headers={"Accept": "application/json"},
+                timeout=15,
+            )
+        except httpx.HTTPError as exc:
+            _log.exception("GitHub token exchange: httpx error")
+            raise HTTPException(status_code=502, detail="Failed to reach GitHub")
         if token_resp.status_code != 200:
             _log.error("GitHub token exchange failed (status %s): %s", token_resp.status_code, token_resp.text)
-            raise HTTPException(status_code=400, detail="Failed to exchange GitHub code")
+            raise HTTPException(status_code=502, detail="Failed to exchange GitHub code")
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
         if not access_token:
-            _log.error("GitHub OAuth error: %s", token_data)
-            raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {token_data.get('error_description', 'unknown')}")
+            err = token_data.get("error_description") or token_data.get("error") or str(token_data)
+            _log.error("GitHub OAuth token error: %s", err)
+            raise HTTPException(status_code=401, detail=f"GitHub rejected OAuth: {err}")
 
-        # Get GitHub user info
-        user_resp = await client.get(
-            "https://api.github.com/user",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
-            timeout=10,
-        )
+        try:
+            # Get GitHub user info
+            user_resp = await client.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+        except httpx.HTTPError as exc:
+            _log.exception("GitHub user info: httpx error")
+            raise HTTPException(status_code=502, detail="Failed to reach GitHub")
         if user_resp.status_code != 200:
             _log.error("GitHub user info failed (status %s): %s", user_resp.status_code, user_resp.text)
-            raise HTTPException(status_code=400, detail="Failed to get user info from GitHub")
+            raise HTTPException(status_code=502, detail="Failed to get user info from GitHub")
         gh_user = user_resp.json()
 
         # Get primary email (GitHub hides emails unless scope includes user:email)
-        email_resp = await client.get(
-            "https://api.github.com/user/emails",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
-            timeout=10,
-        )
-        emails = email_resp.json() if email_resp.status_code == 200 else []
+        try:
+            email_resp = await client.get(
+                "https://api.github.com/user/emails",
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+            emails = email_resp.json() if email_resp.status_code == 200 else []
+        except Exception:
+            _log.exception("GitHub email fetch failed — using noreply fallback")
+            emails = []
 
     github_id = str(gh_user.get("id", ""))
     name      = gh_user.get("name") or gh_user.get("login", "")

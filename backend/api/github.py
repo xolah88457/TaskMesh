@@ -132,33 +132,47 @@ async def github_callback(code: str, state: str, request: Request):
     redirect_uri = _github_redirect_uri(request)
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://github.com/login/oauth/access_token",
-            data={
-                "client_id":     GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
-                "code":          code,
-                "redirect_uri":  redirect_uri,
-            },
-            headers={"Accept": "application/json"},
-            timeout=15,
-        )
+        try:
+            resp = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id":     GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "code":          code,
+                    "redirect_uri":  redirect_uri,
+                },
+                headers={"Accept": "application/json"},
+                timeout=15,
+            )
+        except httpx.HTTPError as exc:
+            _log.exception("GitHub code-push token exchange: httpx error")
+            raise HTTPException(status_code=502, detail="Failed to reach GitHub")
         if resp.status_code != 200:
             _log.error("GitHub code-push token exchange failed (status %s): %s", resp.status_code, resp.text)
-            raise HTTPException(status_code=400, detail="Failed to exchange GitHub code")
+            raise HTTPException(status_code=502, detail="Failed to exchange GitHub code")
         token_data = resp.json()
 
     access_token = token_data.get("access_token")
     if not access_token:
-        raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {token_data.get('error_description', 'unknown')}")
+        err = token_data.get("error_description") or token_data.get("error") or str(token_data)
+        _log.error("GitHub code-push token error: %s", err)
+        raise HTTPException(status_code=401, detail=f"GitHub rejected OAuth: {err}")
 
     # Get GitHub username
-    async with httpx.AsyncClient() as client:
-        me = await client.get(
-            "https://api.github.com/user",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
-        )
-        github_user = me.json().get("login", "")
+    try:
+        async with httpx.AsyncClient() as client:
+            me = await client.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+            if me.status_code != 200:
+                _log.error("GitHub code-push user info failed (status %s): %s", me.status_code, me.text)
+                raise HTTPException(status_code=502, detail="Failed to get user info from GitHub")
+            github_user = me.json().get("login", "")
+    except httpx.HTTPError as exc:
+        _log.exception("GitHub code-push user info: httpx error")
+        raise HTTPException(status_code=502, detail="Failed to reach GitHub")
 
     # Persist token
     from ..db.session import get_session
