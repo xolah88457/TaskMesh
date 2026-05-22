@@ -7,7 +7,6 @@ import AgentNetwork from './components/AgentNetwork'
 import Sidebar from './components/Sidebar'
 import LiveActivity from './components/LiveActivity'
 import SettingsPanel from './components/SettingsPanel'
-import ProjectsDashboard from './pages/ProjectsDashboard'
 import Dashboard from './pages/Dashboard'
 import BillingPage from './pages/BillingPage'
 import AccountPage from './pages/AccountPage'
@@ -195,7 +194,6 @@ export default function App() {
       <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Protected routes */}
-      <Route path="/projects"    element={<ProtectedRoute><ProjectsDashboard /></ProtectedRoute>} />
       <Route path="/project/:id" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
       <Route path="/billing"     element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
       <Route path="/settings"    element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />

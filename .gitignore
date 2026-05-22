@@ -77,3 +77,4 @@ agent-harness-kit-main/
 # ── TaskMesh runtime artifacts ─────────────────────────────────────────────────
 .taskmesh/
 agent-output/
+TM dash/
