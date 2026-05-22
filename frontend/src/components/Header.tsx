@@ -277,11 +277,11 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
           onClick={onSettings}
           className="flex items-center gap-1 text-xs font-mono px-3 py-1 rounded transition-colors"
           style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)', height: 28 }}
-          title="Settings"
+          title="Project Settings"
           onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
           onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-2)')}
         >
-          ⚙ Settings
+          ⚙ Project Settings
         </button>
 
         <Link
@@ -294,18 +294,8 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
         >
           📁
         </Link>
-        <Link
-          to="/billing"
-          className="text-xs px-1.5 py-1 rounded transition-colors font-mono"
-          style={{ color: 'var(--c-text-3)', border: '1px solid var(--c-border)' }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
-          title="Billing"
-        >
-          ✦
-        </Link>
 
-        {/* Account pill — links to /account, never logs out */}
+        {/* Account pill — links to /settings, never logs out */}
         {showLowBalance && (
           <Link
             to="/billing"

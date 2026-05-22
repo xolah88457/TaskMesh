@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useNavigate } from 'react-router-dom'
 import { useAuthFetch } from '../hooks/useAuthFetch'
 
 interface AgentCfg {
@@ -581,18 +580,16 @@ interface Props {
   open: boolean
   onClose: () => void
   onSaved: (agents: AgentCfg[]) => void
-  initialTab?: 'project' | 'account'
 }
 
-export default function SettingsPanel({ open, onClose, onSaved, initialTab = 'project' }: Props) {
+export default function SettingsPanel({ open, onClose, onSaved }: Props) {
   const [cfg, setCfg] = useState<Config>(DEFAULT_CONFIG)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [showRecConfirm, setShowRecConfirm] = useState(false)
   const [recMsg, setRecMsg] = useState('')
-  const [activeTab, setActiveTab] = useState<'project' | 'account'>(initialTab)
   const authFetch = useAuthFetch()
-  const navigate = useNavigate()
+
 
   useEffect(() => {
     if (!open) return
@@ -699,44 +696,23 @@ export default function SettingsPanel({ open, onClose, onSaved, initialTab = 'pr
           <div className="flex items-center justify-between px-5 py-3 shrink-0" style={{ borderBottom: '1px solid var(--c-border)' }}>
             <div className="flex items-center gap-2">
               <span className="text-sm" style={{ color: 'var(--c-text-2)' }}>⚙</span>
-              <span className="text-xs font-mono font-semibold tracking-widest uppercase" style={{ color: 'var(--c-text-1)' }}>Settings</span>
+              <span className="text-xs font-mono font-semibold tracking-widest uppercase" style={{ color: 'var(--c-text-1)' }}>Project Settings</span>
             </div>
             <button onClick={onClose} className="text-lg leading-none" style={{ color: 'var(--c-text-3)' }}>×</button>
-          </div>
-
-          {/* Tab bar */}
-          <div className="flex shrink-0" style={{ borderBottom: '1px solid var(--c-border)' }}>
-            <button
-              onClick={() => setActiveTab('project')}
-              className="flex-1 text-[10px] font-mono py-2 tracking-widest uppercase transition-colors"
-              style={{ color: activeTab === 'project' ? 'var(--c-accent)' : 'var(--c-text-3)', borderBottom: activeTab === 'project' ? '1px solid var(--c-accent)' : '1px solid transparent' }}
-            >
-              Project Settings
-            </button>
-            <button
-              onClick={() => setActiveTab('account')}
-              className="flex-1 text-[10px] font-mono py-2 tracking-widest uppercase transition-colors"
-              style={{ color: activeTab === 'account' ? 'var(--c-accent)' : 'var(--c-text-3)', borderBottom: activeTab === 'account' ? '1px solid var(--c-accent)' : '1px solid transparent' }}
-            >
-              Settings
-            </button>
           </div>
 
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
 
-            <AnimatePresence mode="wait">
-            {activeTab === 'project' ? (
-              <>
-            {/* Sprint */}
+            {/* Name */}
             <Section title="Project">
-              <Field label="Sprint">
+              <Field label="Name">
                 <input
                   className={inputCls}
                   style={inputStyle()}
                   value={cfg.sprint}
                   onChange={e => setCfg(c => ({ ...c, sprint: e.target.value }))}
-                  placeholder="Sprint #1"
+                  placeholder="Project name"
                 />
               </Field>
             </Section>
@@ -803,22 +779,6 @@ export default function SettingsPanel({ open, onClose, onSaved, initialTab = 'pr
                 </p>
               )}
             </Section>
-              </>
-            ) : (
-              <motion.div key="account" className="pt-4">
-                <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-3)' }}>
-                  Account and theme settings are available at the settings page.
-                </p>
-                <button
-                  onClick={() => { navigate('/settings'); onClose() }}
-                  className="w-full text-xs py-2 rounded font-bold transition-colors"
-                  style={{ background: 'var(--c-accent)', color: '#000' }}
-                >
-                  Open Settings →
-                </button>
-              </motion.div>
-            )}
-            </AnimatePresence>
           </div>
 
           {/* Footer */}
@@ -828,11 +788,10 @@ export default function SettingsPanel({ open, onClose, onSaved, initialTab = 'pr
               style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)' }}>
               Close
             </button>
-            {activeTab === 'project' && (
-              <button
-                onClick={handleSave}
-                disabled={saving || saved}
-                className="text-xs font-mono px-4 py-1.5 rounded transition-all"
+            <button
+              onClick={handleSave}
+              disabled={saving || saved}
+              className="text-xs font-mono px-4 py-1.5 rounded transition-all"
                 style={
                   saved
                     ? { border: '1px solid #22c55e', color: '#22c55e', background: 'rgba(34,197,94,0.1)' }
@@ -843,7 +802,6 @@ export default function SettingsPanel({ open, onClose, onSaved, initialTab = 'pr
               >
                 {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save & Apply'}
               </button>
-            )}
           </div>
         </motion.div>
         </>

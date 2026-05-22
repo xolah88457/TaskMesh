@@ -69,7 +69,6 @@ function BillingGate({ children }: { children: React.ReactNode }) {
 function MainApp() {
   const { state, startProject, cancelProject } = useSocket()
   const [settingsOpen, setSettingsOpen]     = useState(false)
-  const [settingsTab, setSettingsTab]       = useState<'project' | 'account'>('project')
   const [sidebarWidth, setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
   const [activityHeight, setActivityHeight] = useState(ACTIVITY_DEFAULT)
 
@@ -120,7 +119,7 @@ function MainApp() {
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden" style={{ background: 'var(--c-bg)' }}>
-      {themeId === 'default' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
+      {themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
 
       <HealthBanner />
 
@@ -133,7 +132,7 @@ function MainApp() {
         running={state.running}
         onStart={startProject}
         onStop={cancelProject}
-        onSettings={() => { setSettingsTab('project'); setSettingsOpen(true) }}
+        onSettings={() => { setSettingsOpen(true) }}
         onToggleSidebar={() => setSidebarWidth(w => w > 0 ? 0 : SIDEBAR_DEFAULT)}
       />
 
@@ -160,7 +159,7 @@ function MainApp() {
             validationVerdicts={state.validationVerdicts}
             validationResult={state.validationResult}
             reworkNotice={state.reworkNotice}
-            onAddAgents={() => { setSettingsTab('project'); setSettingsOpen(true) }}
+            onAddAgents={() => { setSettingsOpen(true) }}
           />
         </div>
       </div>
@@ -177,7 +176,6 @@ function MainApp() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={() => {}}
-        initialTab={settingsTab}
       />
     </div>
   )
