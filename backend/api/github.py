@@ -55,15 +55,10 @@ def _get_base_url(request: Request) -> str:
 
 def _github_redirect_uri(request: Request) -> str:
     """Build the GitHub OAuth redirect URI (code-push flow).
-
-    Priority: explicit env var → FRONTEND_URL + path → request-derived.
-    Routing through FRONTEND_URL keeps cookies on a single origin for
-    split-origin deploys.
-    """
-    if GITHUB_REDIRECT_URI:
-        return GITHUB_REDIRECT_URI
-    if FRONTEND_URL:
-        return f"{FRONTEND_URL.rstrip('/')}/api/github/callback"
+    FRONTEND_URL takes priority; per-provider env var is a fallback."""
+    base = FRONTEND_URL or GITHUB_REDIRECT_URI
+    if base:
+        return f"{base.rstrip('/')}/api/github/callback"
     return f"{_get_base_url(request)}/api/github/callback"
 
 
