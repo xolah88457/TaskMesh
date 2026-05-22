@@ -18,7 +18,6 @@ const PLANS = [
     bonusText:      undefined,
     features: [
       'Up to 3 agents per run',
-      '$15 API credits / month',
       'All Balanced & Budget models',
       'File output to disk',
       'Run history + downloads',
@@ -34,8 +33,7 @@ const PLANS = [
     allocatedCents: 4800,
     bonusText:      '+10% more credits',
     features: [
-      'All 9 agents per run',
-      '$48 API credits / month',
+      'All agents per run',
       'All models including flagship',
       'File output to disk',
       'Run history + downloads',
@@ -49,9 +47,9 @@ const PLANS = [
 ] as const
 
 const PACKS = [
-  { id: 'pack_s', label: 'Add $10',    subLabel: '$20 purchase',  cents: 1000, bonusText: undefined },
-  { id: 'pack_m', label: 'Add $27.50', subLabel: '$50 purchase',  cents: 2750, bonusText: '+5% more credits' },
-  { id: 'pack_l', label: 'Add $60',    subLabel: '$100 purchase', cents: 6000, bonusText: '+10% more credits' },
+  { id: 'pack_s', label: '$20 purchase',  subLabel: undefined, cents: 1000, bonusText: undefined },
+  { id: 'pack_m', label: '$50 purchase',  subLabel: undefined, cents: 2750, bonusText: '+5% more credits' },
+  { id: 'pack_l', label: '$100 purchase', subLabel: undefined, cents: 6000, bonusText: '+10% more credits' },
 ] as const
 
 function BalanceBar({ balanceCents, allocatedCents }: { balanceCents: number; allocatedCents: number }) {
@@ -284,8 +282,7 @@ export default function BillingPage() {
           </div>
 
           {/* Credit packs */}
-          <h2 className="text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>Top up credits</h2>
-          <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-4)' }}>One-time purchases · no expiry · up to 60% goes to API credits</p>
+          <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: 'var(--c-text-3)' }}>Top up credits</h2>
           <div className="flex flex-wrap gap-3">
             {PACKS.map(pack => (
               <button
@@ -299,7 +296,6 @@ export default function BillingPage() {
                 title={currentPlan === 'none' ? 'Requires an active subscription' : undefined}
               >
                 <span style={{ color: 'var(--c-accent)', fontSize: 14 }}>{checkingOut === pack.id ? '…' : pack.label}</span>
-                <span className="text-[10px] font-normal mt-0.5" style={{ color: 'var(--c-text-4)' }}>{pack.subLabel}</span>
                 {pack.bonusText && (
                   <span className="text-[9px] font-bold mt-1 px-1.5 py-0.5 rounded" style={{ background: 'var(--c-accent-dim)', color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
                     {pack.bonusText}

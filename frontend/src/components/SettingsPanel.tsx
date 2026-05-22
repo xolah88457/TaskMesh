@@ -725,7 +725,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
               className="flex-1 text-[10px] font-mono py-2 tracking-widest uppercase transition-colors"
               style={{ color: activeTab === 'account' ? 'var(--c-accent)' : 'var(--c-text-3)', borderBottom: activeTab === 'account' ? '1px solid var(--c-accent)' : '1px solid transparent' }}
             >
-              Account
+              Settings
             </button>
           </div>
 
@@ -735,47 +735,6 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
             <AnimatePresence mode="wait">
             {activeTab === 'project' ? (
               <>
-            {/* Theme */}
-            <Section title="Theme">
-              <div className="grid grid-cols-5 gap-2">
-                {THEMES.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => onThemeChange(t.id)}
-                    className="flex flex-col items-center gap-1.5 group"
-                  >
-                    <div
-                      className="w-full rounded overflow-hidden relative"
-                      style={{
-                        height: '44px',
-                        background: t.previewBg,
-                        border: themeId === t.id
-                          ? `2px solid var(--c-accent)`
-                          : `1px solid ${t.previewText}`,
-                        boxShadow: themeId === t.id ? '0 0 0 1px var(--c-accent)' : 'none',
-                      }}
-                    >
-                      {/* Mock lines */}
-                      <div className="absolute top-[8px] left-[6px] right-[14px] h-[2px] rounded" style={{ background: t.previewText, opacity: 0.5 }} />
-                      <div className="absolute top-[13px] left-[6px] right-[18px] h-[2px] rounded" style={{ background: t.previewText, opacity: 0.3 }} />
-                      <div className="absolute top-[18px] left-[6px] right-[10px] h-[2px] rounded" style={{ background: t.previewAccent, opacity: 0.8 }} />
-                      <div className="absolute top-[23px] left-[6px] right-[16px] h-[2px] rounded" style={{ background: t.previewAccent, opacity: 0.5 }} />
-                      <div className="absolute top-[28px] left-[6px] right-[12px] h-[2px] rounded" style={{ background: t.previewText, opacity: 0.25 }} />
-                      {themeId === t.id && (
-                        <div className="absolute bottom-0 left-0 right-0 h-[3px]" style={{ background: t.previewAccent }} />
-                      )}
-                    </div>
-                    <span
-                      className="text-[9px] font-mono leading-none"
-                      style={{ color: themeId === t.id ? 'var(--c-accent)' : 'var(--c-text-3)' }}
-                    >
-                      {t.name}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </Section>
-
             {/* Sprint */}
             <Section title="Project">
               <Field label="Sprint">
@@ -787,30 +746,6 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
                   placeholder="Sprint #1"
                 />
               </Field>
-            </Section>
-
-            {/* Provider API Key */}
-            <Section title="OpenCode Zen API Key">
-              <div className="space-y-1.5">
-                <div className="flex gap-1">
-                  <input
-                    className={inputCls + ' flex-1'}
-                    style={inputStyle()}
-                    type={showKey ? 'text' : 'password'}
-                    value={cfg.provider.apiKey}
-                    onChange={e => updateProvider('apiKey', e.target.value)}
-                    placeholder="Paste your OpenCode Zen API key…"
-                  />
-                  <button
-                    onClick={() => setShowKey(s => !s)}
-                    className="text-[10px] font-mono px-2 rounded shrink-0"
-                    style={{ color: 'var(--c-text-3)', border: '1px solid var(--c-border)' }}
-                  >{showKey ? 'hide' : 'show'}</button>
-                </div>
-                <p className="text-[9px] font-mono pl-0.5" style={{ color: 'var(--c-text-4)' }}>
-                  Master Zen API key for all models — manage at opencode.ai/zen
-                </p>
-              </div>
             </Section>
 
             {/* Agents */}
@@ -879,14 +814,14 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
             ) : (
               <motion.div key="account" className="pt-4">
                 <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-3)' }}>
-                  Account settings are available at the dedicated account page.
+                  Account and theme settings are available at the settings page.
                 </p>
                 <button
-                  onClick={() => { navigate('/account'); onClose() }}
+                  onClick={() => { navigate('/settings'); onClose() }}
                   className="w-full text-xs py-2 rounded font-bold transition-colors"
                   style={{ background: 'var(--c-accent)', color: '#000' }}
                 >
-                  Open Account Settings →
+                  Open Settings →
                 </button>
               </motion.div>
             )}

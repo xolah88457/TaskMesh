@@ -322,7 +322,7 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
         )}
         {user && (
           <Link
-            to="/account"
+            to="/settings"
             className="text-[10px] font-mono px-2 py-1 rounded transition-colors max-w-[100px] truncate"
             style={{ color: 'var(--c-text-3)', border: '1px solid var(--c-border)' }}
             onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}

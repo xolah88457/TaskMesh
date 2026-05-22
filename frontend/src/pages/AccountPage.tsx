@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthFetch } from '../hooks/useAuthFetch'
 import { useAuthContext } from '../context/auth'
+import { THEMES, DEFAULT_THEME_ID, getTheme } from '../themes'
 
 interface Profile {
   id: string
@@ -89,6 +90,21 @@ export default function AccountPage() {
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleteMsg, setDeleteMsg]         = useState('')
   const [deleting, setDeleting]           = useState(false)
+
+  // Theme
+  const [themeId, setThemeId] = useState(() =>
+    localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
+  )
+  const applyTheme = (id: string) => {
+    setThemeId(id)
+    localStorage.setItem('agentteam-theme', id)
+    const t = getTheme(id)
+    if (!t) return
+    const root = document.documentElement
+    for (const [k, v] of Object.entries(t.vars)) {
+      root.style.setProperty(k, v as string)
+    }
+  }
 
   useEffect(() => {
     authFetch('/api/account/profile')
@@ -226,7 +242,7 @@ export default function AccountPage() {
         </button>
         <span className="text-[var(--c-accent)] font-bold tracking-widest text-xs uppercase">TASKMESH</span>
         <span className="text-[var(--c-text-4)] text-xs">›</span>
-        <span className="text-[var(--c-text-1)] text-xs">Account</span>
+        <span className="text-[var(--c-text-1)] text-xs">Settings</span>
       </div>
 
       {loading && (
@@ -234,7 +250,7 @@ export default function AccountPage() {
       )}
 
       {!loading && profile && (
-        <div className="flex-1 overflow-y-auto px-6 py-8" style={{ maxWidth: 560 }}>
+        <div className="flex-1 overflow-y-auto px-6 py-8">
 
           {/* ── Profile ── */}
           <SectionHeader title="Profile" />
@@ -271,6 +287,47 @@ export default function AccountPage() {
               </button>
             </form>
             <StatusMsg msg={nameMsg} isError={nameErr} />
+          </div>
+
+          {/* ── Theme ── */}
+          <SectionHeader title="Theme" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <div className="grid grid-cols-5 gap-2">
+              {THEMES.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => applyTheme(t.id)}
+                  className="flex flex-col items-center gap-1.5 group"
+                >
+                  <div
+                    className="w-full rounded overflow-hidden relative"
+                    style={{
+                      height: '44px',
+                      background: t.previewBg,
+                      border: themeId === t.id
+                        ? `2px solid var(--c-accent)`
+                        : `1px solid ${t.previewText}`,
+                      boxShadow: themeId === t.id ? '0 0 0 1px var(--c-accent)' : 'none',
+                    }}
+                  >
+                    <div className="absolute top-[8px] left-[6px] right-[14px] h-[2px] rounded" style={{ background: t.previewText, opacity: 0.5 }} />
+                    <div className="absolute top-[13px] left-[6px] right-[18px] h-[2px] rounded" style={{ background: t.previewText, opacity: 0.3 }} />
+                    <div className="absolute top-[18px] left-[6px] right-[10px] h-[2px] rounded" style={{ background: t.previewAccent, opacity: 0.8 }} />
+                    <div className="absolute top-[23px] left-[6px] right-[16px] h-[2px] rounded" style={{ background: t.previewAccent, opacity: 0.5 }} />
+                    <div className="absolute top-[28px] left-[6px] right-[12px] h-[2px] rounded" style={{ background: t.previewText, opacity: 0.25 }} />
+                    {themeId === t.id && (
+                      <div className="absolute bottom-0 left-0 right-0 h-[3px]" style={{ background: t.previewAccent }} />
+                    )}
+                  </div>
+                  <span
+                    className="text-[9px] font-mono leading-none"
+                    style={{ color: themeId === t.id ? 'var(--c-accent)' : 'var(--c-text-3)' }}
+                  >
+                    {t.name}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* ── Change email ── */}

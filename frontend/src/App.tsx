@@ -204,7 +204,7 @@ export default function App() {
       {/* Protected routes */}
       <Route path="/projects" element={<ProtectedRoute><ProjectsDashboard /></ProtectedRoute>} />
       <Route path="/billing"  element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
-      <Route path="/account"  element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
       <Route path="/*"        element={
         <ProtectedRoute>
           <BillingGate>
