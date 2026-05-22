@@ -20,9 +20,14 @@ export default function AuthCallback() {
 
     const token = window.location.hash.slice(1)  // strip leading '#'
     if (token) {
-      login()
-      window.history.replaceState(null, '', '/auth/callback')  // clear hash from URL
-      navigate('/', { replace: true })
+      login().then(success => {
+        window.history.replaceState(null, '', '/auth/callback')  // clear hash from URL
+        if (success) {
+          navigate('/', { replace: true })
+        } else {
+          navigate('/login?error=oauth_failed', { replace: true })
+        }
+      })
     } else {
       // No token — something went wrong with the OAuth flow
       navigate('/login?error=oauth_failed', { replace: true })

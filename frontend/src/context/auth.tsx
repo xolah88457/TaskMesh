@@ -21,7 +21,7 @@ interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   getToken: () => Promise<string | null>
-  login: () => void
+  login: () => Promise<boolean>
   logout: () => void
 }
 
@@ -33,7 +33,7 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   token: null,
   getToken: async () => null,
-  login: () => {},
+  login: async () => false,
   logout: () => {},
 })
 
@@ -59,14 +59,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => setUser(null))
   }, [])
 
-  const login = useCallback(() => {
+  const login = useCallback(async (): Promise<boolean> => {
     // Token is in HttpOnly cookie. After login/register/OAuth, the cookie
     // is set server-side. We refresh the user state from /api/auth/me.
-    if (AUTH_DISABLED) return
-    fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(u => setUser({ id: u.id, email: u.email ?? '', name: u.name ?? '' }))
-      .catch(() => {})
+    if (AUTH_DISABLED) return true
+    try {
+      const r = await fetch('/api/auth/me')
+      if (!r.ok) throw r.status
+      const u = await r.json()
+      setUser({ id: u.id, email: u.email ?? '', name: u.name ?? '' })
+      return true
+    } catch {
+      return false
+    }
   }, [])
 
   const logout = useCallback(async () => {

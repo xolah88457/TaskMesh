@@ -59,7 +59,8 @@ export default function RegisterPage() {
         setError(data.detail ?? 'Registration failed')
         return
       }
-      login()
+      const success = await login()
+      if (!success) { setError('Registration failed — could not verify session'); return }
       navigate('/', { replace: true })
     } catch {
       setError('Network error — is the backend running?')
