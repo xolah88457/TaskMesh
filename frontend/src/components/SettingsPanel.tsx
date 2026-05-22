@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { THEMES } from '../themes'
 import { useAuthFetch } from '../hooks/useAuthFetch'
 
 interface AgentCfg {
@@ -582,16 +581,13 @@ interface Props {
   open: boolean
   onClose: () => void
   onSaved: (agents: AgentCfg[]) => void
-  themeId: string
-  onThemeChange: (id: string) => void
   initialTab?: 'project' | 'account'
 }
 
-export default function SettingsPanel({ open, onClose, onSaved, themeId, onThemeChange, initialTab = 'project' }: Props) {
+export default function SettingsPanel({ open, onClose, onSaved, initialTab = 'project' }: Props) {
   const [cfg, setCfg] = useState<Config>(DEFAULT_CONFIG)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [showKey, setShowKey] = useState(false)
   const [showRecConfirm, setShowRecConfirm] = useState(false)
   const [recMsg, setRecMsg] = useState('')
   const [activeTab, setActiveTab] = useState<'project' | 'account'>(initialTab)
@@ -616,9 +612,6 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
       }))
       .catch(() => {})
   }, [open])
-
-  const updateProvider = (key: keyof Config['provider'], val: string) =>
-    setCfg(c => ({ ...c, provider: { ...c.provider, [key]: val } }))
 
   const updateAgent = (idx: number, key: keyof AgentCfg, val: string | number | boolean) =>
     setCfg(c => {

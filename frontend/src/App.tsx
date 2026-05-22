@@ -72,10 +72,9 @@ function MainApp() {
   const [settingsTab, setSettingsTab]       = useState<'project' | 'account'>('project')
   const [sidebarWidth, setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
   const [activityHeight, setActivityHeight] = useState(ACTIVITY_DEFAULT)
-  const [themeId, setThemeId]               = useState(() =>
-    localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
-  )
 
+  // Apply theme CSS variables on mount
+  const themeId = localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
   const theme = getTheme(themeId)
 
   useEffect(() => {
@@ -84,11 +83,6 @@ function MainApp() {
       root.style.setProperty(key, value)
     })
   }, [theme])
-
-  const handleThemeChange = useCallback((id: string) => {
-    setThemeId(id)
-    localStorage.setItem('agentteam-theme', id)
-  }, [])
 
   const onSidebarDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -183,8 +177,6 @@ function MainApp() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={() => {}}
-        themeId={themeId}
-        onThemeChange={handleThemeChange}
         initialTab={settingsTab}
       />
     </div>
