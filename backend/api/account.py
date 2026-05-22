@@ -232,9 +232,13 @@ async def get_zen_summary(user: dict = Depends(require_auth)):
 @router.delete("")
 async def delete_account(user: dict = Depends(require_auth)):
     """Permanently delete the account and all associated data."""
-    from sqlalchemy import delete as sql_delete
+    from sqlalchemy import delete as sql_delete, select
     from ..db.session import get_session
-    from ..db.models import User, UserUsage, UserCredits, UserGitHub, Run, ZenUsage
+    from ..db.models import (
+        User, UserUsage, UserCredits, UserGitHub, Run, ZenUsage,
+        Notification, Task, CoordinatorEvent, ActionFile, ActionTool,
+        TaskAcceptance,
+    )
 
     user_id = user.get("sub", "")
 
@@ -242,13 +246,28 @@ async def delete_account(user: dict = Depends(require_auth)):
         if session is None:
             raise HTTPException(status_code=503, detail="Database not configured")
 
-        # Delete in dependency order
-        # RunFiles are cascade-deleted with Runs via FK
+        # Collect run ids first so we can prune the run-scoped audit tables
+        # that don't carry user_id directly.
+        run_ids = (await session.execute(
+            select(Run.id).where(Run.user_id == user_id)
+        )).scalars().all()
+
+        if run_ids:
+            await session.execute(sql_delete(Task).where(Task.run_id.in_(run_ids)))
+            await session.execute(sql_delete(CoordinatorEvent).where(CoordinatorEvent.run_id.in_(run_ids)))
+            await session.execute(sql_delete(ActionFile).where(ActionFile.run_id.in_(run_ids)))
+            await session.execute(sql_delete(ActionTool).where(ActionTool.run_id.in_(run_ids)))
+            await session.execute(sql_delete(TaskAcceptance).where(TaskAcceptance.run_id.in_(run_ids)))
+
+        # Delete in dependency order.
+        # RunFiles cascade with Runs via FK; ActionFile/ActionTool/etc. are
+        # plain run_id strings with no FK so we handled them explicitly above.
         await session.execute(sql_delete(Run).where(Run.user_id == user_id))
         await session.execute(sql_delete(UserUsage).where(UserUsage.user_id == user_id))
         await session.execute(sql_delete(UserCredits).where(UserCredits.user_id == user_id))
         await session.execute(sql_delete(UserGitHub).where(UserGitHub.user_id == user_id))
         await session.execute(sql_delete(ZenUsage).where(ZenUsage.user_id == user_id))
+        await session.execute(sql_delete(Notification).where(Notification.user_id == user_id))
 
         user_row = await session.get(User, user_id)
         if user_row:

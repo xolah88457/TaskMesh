@@ -1,7 +1,6 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthFetch } from '../hooks/useAuthFetch'
-import { useSocket } from '../hooks/useSocket'
 
 interface Usage {
   plan: 'none' | 'starter' | 'pro'
@@ -87,11 +86,9 @@ function BalanceBar({ balanceCents, allocatedCents }: { balanceCents: number; al
 export default function BillingPage() {
   const authFetch                     = useAuthFetch()
   const navigate                      = useNavigate()
-  const { state }                     = useSocket()
   const [usage, setUsage]             = useState<Usage | null>(null)
   const [loading, setLoading]         = useState(true)
   const [checkingOut, setCheckingOut] = useState<string | null>(null)
-  const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null)
   const [adminOpen, setAdminOpen]     = useState(false)
   const [adminKey, setAdminKey]       = useState('')
   const [adminMsg, setAdminMsg]       = useState('')
@@ -104,16 +101,17 @@ export default function BillingPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
 
-  useEffect(() => { fetchUsage() }, [authFetch])
-
+  // Poll usage every 30s while this page is mounted. We used to gate the poll
+  // on a Socket.IO `state.running` flag, but that required opening a duplicate
+  // socket on the billing page solely to read one boolean — wasteful. A flat
+  // 30s poll covers the same UX (credits update during/after a run).
   useEffect(() => {
-    if (state.running) {
-      if (!pollRef.current) pollRef.current = setInterval(fetchUsage, 30_000)
-    } else {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; fetchUsage() }
-    }
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [state.running])
+    fetchUsage()
+    const id = setInterval(fetchUsage, 30_000)
+    return () => clearInterval(id)
+    // fetchUsage is recreated each render but its identity does not matter here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch])
 
   const submitAdminBypass = async () => {
     if (!adminKey.trim()) return

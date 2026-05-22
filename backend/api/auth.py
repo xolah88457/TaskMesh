@@ -229,6 +229,9 @@ async def google_callback(code: str, state: str = "", request: "Request | None" 
     # The HttpOnly cookie is set alongside for XSS-safe auth.
     response = RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
     set_token_cookie(response, jwt_token)
+    # Clear the one-shot anti-CSRF state cookie now that it's been verified.
+    # (GitHub callback already does this; Google was leaving it behind.)
+    response.delete_cookie("oauth_state", path="/api/auth")
     return response
 
 
@@ -362,12 +365,14 @@ async def get_me(user: dict = Depends(require_auth)):
 @router.post("/logout")
 async def logout_auth():
     """Clear the HttpOnly auth cookie. No auth required — if no cookie, it's a no-op."""
+    from ..auth.auth import _cookie_samesite
     response = JSONResponse({"status": "logged_out"})
+    samesite = _cookie_samesite()
     response.delete_cookie(
         key="token",
         path="/",
         httponly=True,
-        secure=os.environ.get("ENVIRONMENT") == "production",
-        samesite="strict",
+        secure=os.environ.get("ENVIRONMENT") == "production" or samesite == "none",
+        samesite=samesite,
     )
     return response

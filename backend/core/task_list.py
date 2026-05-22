@@ -59,11 +59,13 @@ class SharedTaskList:
     ) -> dict:
         self._order += 1
         self._dirty = True
-        task_id = str(id(f"{title}_{self._order}"))[-8:]
+        # Fallback id used when no DB is configured. Includes a strictly
+        # increasing counter to guarantee uniqueness within a run.
+        fallback_id = f"mem-{self._order}"
 
         now = datetime.now(timezone.utc).isoformat()
         task: dict = {
-            "id": task_id, "order": self._order,
+            "id": fallback_id, "order": self._order,
             "title": title, "description": description,
             "status": status, "assigned_to": None,
             "created_by": created_by, "output_files": [],
@@ -84,11 +86,14 @@ class SharedTaskList:
                 )
                 session.add(db_task)
                 await session.flush()  # get task.id
-                db_task_id = str(db_task.id)
-                task["_db_id"] = db_task_id
+                # Use the DB id as the canonical id. Without this the in-memory
+                # copy and the DB row had different ids and complete_task /
+                # start_task lookups would silently miss when the orchestrator
+                # mixed memory-cached and DB-claimed task handles.
+                task["id"] = str(db_task.id)
                 for i, criterion in enumerate(acceptance or [], start=1):
                     session.add(TaskAcceptance(
-                        task_id=db_task_id,
+                        task_id=str(db_task.id),
                         run_id=self._run_id,
                         criterion=criterion,
                         met=False,
@@ -293,7 +298,14 @@ class SharedTaskList:
     # ── stale-claim recovery ──────────────────────────────────────────────
 
     async def recover_stale_claims(self, max_age_seconds: int = 300) -> int:
-        """Reset tasks stuck in 'claimed' state for longer than max_age_seconds."""
+        """Reset tasks stuck in 'claimed' state for longer than max_age_seconds.
+
+        Now that `_claim_db` leaves `started_at = NULL` (start_task sets it),
+        a crashed agent that claimed but never started would have NULL there.
+        We treat any "claimed" row with a NULL started_at as immediately stale
+        once its claim is older than the cutoff via created_at.
+        """
+        from sqlalchemy import or_, and_
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
         async with self._sessions() as session:
             if session is not None:
@@ -303,7 +315,13 @@ class SharedTaskList:
                     .where(
                         TaskModel.run_id == self._run_id,
                         TaskModel.status == "claimed",
-                        TaskModel.started_at < cutoff,
+                        or_(
+                            TaskModel.started_at < cutoff,
+                            and_(
+                                TaskModel.started_at.is_(None),
+                                TaskModel.created_at < cutoff,
+                            ),
+                        ),
                     )
                     .values(status="available", assigned_to=None, started_at=None)
                 )
@@ -326,9 +344,12 @@ class SharedTaskList:
         row = result.scalar_one_or_none()
         if row is None:
             return None
-        row.status = "in_progress"
+        # Mark "claimed" not "in_progress". The orchestrator immediately follows
+        # with start_task() which flips claimed → in_progress; that two-step
+        # state flow mirrors the in-memory path and matches the comment block
+        # at the top of `add_task` (available → claimed → in_progress → done).
+        row.status = "claimed"
         row.assigned_to = agent_id
-        row.started_at = datetime.now(timezone.utc)
         return _row_to_task(row)
 
     def _claim_memory(self, agent_id: str) -> dict | None:

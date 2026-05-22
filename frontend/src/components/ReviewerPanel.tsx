@@ -15,7 +15,13 @@ const SEVERITY_COLOR: Record<string, string> = {
 }
 
 export default function ReviewerPanel({ active, result, acceptance }: Props) {
-  if (!active && !result) return null
+  // Render whenever we have anything meaningful to show. The reviewer_*
+  // Socket.IO channel was retired in favour of validation_verdict, so the
+  // `active` / `result` props are usually empty — but acceptance criteria
+  // still flow through TasksList and we want them surfaced once at least
+  // one criterion exists.
+  const hasAcceptance = acceptance && acceptance.length > 0
+  if (!active && !result && !hasAcceptance) return null
 
   return (
     <div className="pt-3" style={{ borderTop: '1px solid var(--c-border)' }}>

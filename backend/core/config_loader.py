@@ -57,41 +57,23 @@ def get_project_dir() -> Path:
 
 
 def load_config(user_id: str = "") -> ProjectConfig:
-    """Load agent config for a user. Falls back to disk file if no per-user config."""
+    """Load agent config from disk. Per-user DB-backed config is handled by
+    the async helper `_load_user_config` in `api/routes.py` — call that
+    directly from FastAPI handlers.
+
+    The `user_id` parameter is accepted for API compatibility but is unused
+    here. The old implementation tried to wrap an async DB call with
+    ``asyncio.get_event_loop().run_until_complete`` which raises inside an
+    already-running event loop (FastAPI). It now no-ops; callers from sync
+    contexts only ever get the disk default.
+    """
     cwd = get_project_dir()
     project_name = cwd.name
 
     sprint = "Sprint #1"
     agents = [a.copy() for a in DEFAULT_AGENTS]
     provider = ProviderConfig()
-
-    # Try per-user config from DB first
-    if user_id:
-        try:
-            from ..db.session import get_session
-            from ..db.models import User
-            import asyncio as _asyncio
-            async def _load():
-                async with get_session() as session:
-                    if session is not None:
-                        user_row = await session.get(User, user_id)
-                        if user_row and user_row.config_json:
-                            return json.loads(user_row.config_json)
-                    return None
-            data = _asyncio.get_event_loop().run_until_complete(_load())
-            if data:
-                sprint = data.get("sprint", sprint)
-                if isinstance(data.get("agents"), list) and data["agents"]:
-                    agents = data["agents"]
-                if isinstance(data.get("provider"), dict):
-                    p = data["provider"]
-                    provider = ProviderConfig(
-                        name=p.get("name", provider.name),
-                        baseURL=p.get("baseURL", provider.baseURL),
-                        apiKey=p.get("apiKey", provider.apiKey),
-                    )
-        except Exception:
-            pass
+    _ = user_id  # reserved for future sync DB path
 
     # Fall back to disk file if no per-user config loaded
     if agents == [a.copy() for a in DEFAULT_AGENTS]:

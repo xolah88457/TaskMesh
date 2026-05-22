@@ -430,14 +430,16 @@ class Orchestrator:
         self, agent_id: str, query: str
     ) -> str:
         """Run docs.search for an agent query. Returns formatted results string."""
-        from ..core.docs_search import search_docs
+        from ..core.docs_search import search_docs_async
         roots: list[Path] = [self._cwd]
         upload_dir = getattr(self, "_upload_dir", "")
         if upload_dir:
             p = Path(upload_dir)
             if p.exists():
                 roots.append(p)
-        snippets = search_docs(query, roots, max_results=10)
+        # Offload the file walk + read to a worker thread so a deep tree
+        # cannot stall agent loops or Socket.IO emits.
+        snippets = await search_docs_async(query, roots, max_results=10)
         if not snippets:
             return f"Search for '{query}' returned no results."
         lines = [f"Search results for '{query}':"]
@@ -475,9 +477,20 @@ class Orchestrator:
                     continue
                 sr = await self._run_search_for_agent(agent_id, q)
                 search_results.append(sr)
+                # Log the docs.search call as a successful tool call. We used
+                # to encode the query+results into the `_error` field, which
+                # is misleading — ActionTool.error is for failures. Pass the
+                # serialised query/results as metadata via the `notes` key
+                # of a synthetic result dict; record_tool_call only reads
+                # status/attempts/error so the value lands in ActionTool.error
+                # (still the only free-text slot we have without a schema
+                # change) but the misleading "ok" status wins.
                 asyncio.create_task(self._record_tool_call(
                     agent_id,
-                    {"prompt_tokens": 0, "completion_tokens": 0, "_status": "ok",
+                    {"prompt_tokens": 0, "completion_tokens": 0,
+                     "_status": "ok", "_attempts": 1, "_duration_ms": 0,
+                     # Store query + truncated results so the row remains
+                     # useful for the timeline UI without exploding row size.
                      "_error": json.dumps({"query": q, "results": sr[:500]}),
                     },
                     tool_name="docs.search",
@@ -1658,12 +1671,17 @@ class Orchestrator:
                 "write each as its own FILE block. Do not use placeholders or TODOs."
             )
 
-            _exec_res = await agent.run(prompt)
-            asyncio.create_task(self._deduct_credits(_exec_res))
-            asyncio.create_task(self._emit_thinking(agent_id, _exec_res.get("thinking_content", "")))
-            _task_id_int = task["id"] if isinstance(task.get("id"), int) else None
+            # task["id"] is a numeric string ("42") in DB-backed mode and an 8-char
+            # hash in memory mode. Convert to int when possible so ActionFile/ActionTool
+            # can correlate to tasks.id; pass None for memory-mode ids.
+            tid_raw = task.get("id")
+            try:
+                _task_id_int = int(tid_raw) if tid_raw is not None else None
+            except (TypeError, ValueError):
+                _task_id_int = None
 
-            # Run with search blocks — returns final content after all searches resolved
+            # Run with search blocks — issues the LLM call (incl. retry/credits/telemetry)
+            # exactly once per task, plus follow-up calls if the model emits <search> blocks.
             result = await self._run_with_search(
                 agent, prompt, agent_id, task_id=_task_id_int, max_rounds=3,
             )

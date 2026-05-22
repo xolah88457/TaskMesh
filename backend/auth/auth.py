@@ -36,14 +36,39 @@ if AUTH_DISABLED:
     )
 
 
+def _cookie_samesite() -> str:
+    """Pick the auth cookie's SameSite policy.
+
+    Defaults to "strict" — the safest for local dev where everything is
+    same-origin. When the frontend and backend live on different domains
+    (e.g. Vercel front, Render back) Socket.IO opens a direct WebSocket
+    to the backend; samesite=strict drops the cookie on that cross-site
+    request and the socket can't authenticate.
+
+    Operators on a split-origin deploy should set:
+        COOKIE_SAMESITE=none
+        ENVIRONMENT=production       # forces secure=true
+    """
+    val = os.environ.get("COOKIE_SAMESITE", "strict").lower()
+    if val not in ("strict", "lax", "none"):
+        return "strict"
+    return val
+
+
 def set_token_cookie(response: Response, token: str, max_age_days: int = _TOKEN_DAYS) -> None:
-    """Set the JWT in an HttpOnly, SameSite=Strict cookie."""
+    """Set the JWT in an HttpOnly cookie. SameSite is configurable for
+    split-origin deployments — see _cookie_samesite()."""
+    samesite = _cookie_samesite()
+    # samesite=none requires Secure=true per the spec. Force secure=true in
+    # that case even if ENVIRONMENT is unset, otherwise the cookie is silently
+    # rejected by modern browsers.
+    secure = os.environ.get("ENVIRONMENT") == "production" or samesite == "none"
     response.set_cookie(
         key="token",
         value=token,
         httponly=True,
-        secure=os.environ.get("ENVIRONMENT") == "production",
-        samesite="strict",
+        secure=secure,
+        samesite=samesite,
         max_age=max_age_days * 86400,
         path="/",
     )

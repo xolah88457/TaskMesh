@@ -26,7 +26,10 @@ export default function LiveActivity({ log, agents }: Props) {
         <AnimatePresence initial={false}>
           {log.map((entry, i) => (
             <motion.div
-              key={i}
+              // Composite key — entries are append-only with .slice(-60),
+              // so combining time + agent + position keeps stable identity
+              // across re-renders without relying on positional index alone.
+              key={`${entry.time}-${entry.agentId}-${i}`}
               initial={{ opacity: 0, y: 3 }}
               animate={{ opacity: 1, y: 0 }}
               className="flex items-start gap-2 text-[10px] font-mono py-[1px]"

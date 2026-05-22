@@ -148,6 +148,8 @@ class BaseAgent:
         """
         started = time.monotonic()
         last_error = ""
+        attempt = 0  # initialised so the failure return path is safe even if
+                     # max_retries <= 0 and the for-loop body never runs.
         for attempt in range(max_retries):
             try:
                 result = await call_fn()
@@ -172,7 +174,7 @@ class BaseAgent:
             "model":             self.model,
             "_attempts":         attempt + 1,
             "_status":           "failed",
-            "_error":            last_error,
+            "_error":            last_error or "max_retries=0",
             "_duration_ms":      int((time.monotonic() - started) * 1000),
         }
 

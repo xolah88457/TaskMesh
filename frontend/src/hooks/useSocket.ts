@@ -2,7 +2,7 @@ import { useEffect, useReducer, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 import type {
   ProjectState, Agent, Task, LogEntry, NetMessage,
-  ReviewerResult, CoordLogEntry, MailboxMessage, AcceptanceCriterion,
+  CoordLogEntry, MailboxMessage, AcceptanceCriterion,
   StageName, ValidationVerdict,
 } from '../types'
 import { useAuthFetch } from './useAuthFetch'
@@ -56,9 +56,6 @@ type Action =
   | { type: 'DONE' }
   // coordination actions
   | { type: 'STAGE_START'; stage: StageName; participants: string[] }
-  | { type: 'REVIEWER_STARTED' }
-  | { type: 'REVIEWER_RESULT'; result: ReviewerResult }
-  | { type: 'REVIEWER_RETRY'; taskIds: string[] }
   | { type: 'RUN_RESUMABLE'; runId: string; brief: string; startedAt: string }
   | { type: 'COORD_LOG'; entry: CoordLogEntry }
   | { type: 'FILE_LOCKED'; path: string; agentId: string }
@@ -192,21 +189,10 @@ function reducer(state: ProjectState, action: Action): ProjectState {
         running: false,
         messages: [],
         selectedAgentIds: null,
-        reviewerActive: false,
         fileLocks: {},
       }
 
     // ── coordination actions ──────────────────────────────────────────────────
-
-    case 'REVIEWER_STARTED':
-      return { ...state, reviewerActive: true, reviewerResult: null }
-
-    case 'REVIEWER_RESULT':
-      return { ...state, reviewerActive: false, reviewerResult: action.result }
-
-    case 'REVIEWER_RETRY':
-      // Future: trigger retry of failed tasks. No-op for now.
-      return state
 
     case 'RUN_RESUMABLE':
       // Future: surface a "Resume?" prompt. Logged to terminal for now.
@@ -374,15 +360,9 @@ export function useSocket() {
     socket.on('run_done', () => dispatch({ type: 'DONE' }))
 
     // ── coordination events ───────────────────────────────────────────────────
-
-    socket.on('reviewer_started', () =>
-      dispatch({ type: 'REVIEWER_STARTED' }))
-
-    socket.on('reviewer_result', ({ result }: { result: ReviewerResult }) =>
-      dispatch({ type: 'REVIEWER_RESULT', result }))
-
-    socket.on('reviewer_retry', ({ taskIds }: { taskIds: string[] }) =>
-      dispatch({ type: 'REVIEWER_RETRY', taskIds }))
+    // (Note: legacy reviewer_started / reviewer_result / reviewer_retry events are
+    //  no longer emitted — the reviewer's verdict comes through `validation_verdict`
+    //  + `validation_complete` as part of the stage 4 multi-agent validation pass.)
 
     socket.on('run_resumable', ({ runId, brief, startedAt }: { runId: string; brief: string; startedAt: string }) =>
       dispatch({ type: 'RUN_RESUMABLE', runId, brief, startedAt }))
@@ -477,13 +457,24 @@ export function useSocket() {
       .then(r => r.json())
       .then(data => {
         if (data.status === 'started') {
+          // The backend has already accepted the run regardless of the user's
+          // answer to the credit-warning confirm. We only use confirm() to let
+          // the user decide whether to dismiss the popup; the run will continue
+          // either way and they'll see it complete or hit no-credits naturally.
           if (data.credit_warning) {
-            const proceed = window.confirm(data.credit_warning + '\n\nStart anyway?')
-            if (!proceed) return
+            // setTimeout pushes the modal out of React's render cycle, which
+            // prevents the dialog from blocking incoming Socket.IO START frames.
+            setTimeout(() => window.alert(data.credit_warning), 0)
           }
           dispatch({ type: 'START' })
         } else if (data.error === 'run_limit_reached') {
           alert('Monthly run limit reached. Upgrade at /billing to continue.')
+        } else if (data.error === 'no_subscription') {
+          alert('You need an active subscription to start a run. Go to Billing to pick a plan.')
+        } else if (data.error === 'no_credits') {
+          alert('Out of credits. Top up at Billing to keep running agents.')
+        } else if (data.error === 'already running') {
+          alert('A run is already in progress. Stop it before starting another.')
         } else if (data.error) {
           alert(`Could not start: ${data.error}`)
         }

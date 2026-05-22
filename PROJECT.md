@@ -1,6 +1,6 @@
 # TaskMesh — Project State
-> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-21 (3-Stage Pipeline + Thinking + Polish — all items shipped).
-> Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`.
+> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-22 (Second full-codebase audit — 18 fixes shipped).
+> Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`. Open items: `AUDIT_REMAINING.md`.
 
 ---
 
@@ -217,6 +217,9 @@ curl -X POST http://localhost:8000/api/auth/register \
 | Balance warning at $2.50 threshold | Early enough to prompt top-up; not so aggressive it annoys users. Turns red at $0.00. Absolute values never shown — just "Low balance" / "No credits". |
 | Run timeout at 600s default | Most runs complete in 2-5 minutes. 10 minutes is a generous ceiling that prevents credit drain from stuck agents. Configurable via RUN_TIMEOUT_SECONDS. |
 | OpenRouter as env toggle, not replacement | Keeps Zen as default. Operators can switch with `PROVIDER=openrouter` without code changes. Both API keys checked at runtime. |
+| **Cookie SameSite configurable (2026-05-22)** | Split-origin deploys (Vercel↔Render) need `SameSite=None` so Socket.IO can carry the cookie. `COOKIE_SAMESITE` env var defaults to `strict` for local dev. |
+| **Removed duplicate LLM call (2026-05-22)** | `_run_agent_loop` was hitting OpenCode Zen twice per task (direct + via `_run_with_search`). Halves credit burn on executors. The search wrapper is now the single entry point. |
+| **DB task id = canonical id (2026-05-22)** | `SharedTaskList.add_task` overrides the memory copy's id with the DB row id when DB-backed; `_claim_db` sets `status="claimed"` (not `in_progress`) so `start_task`'s documented transition is real. |
 
 ---
 
@@ -260,37 +263,38 @@ The current milestone is "working SaaS product, end-to-end":
 
 ## Where I Left Off (Agent Recovery)
 
-**Session ended:** 2026-05-21 (3-Stage Pipeline + Thinking Budget + Polish — all items complete)
+**Session ended:** 2026-05-22 (Second full-codebase audit — 18 fixes shipped)
 **Last actions:**
-- **3-stage pipeline**: Replaced old 2-phase (Manager→Agents) with 3-stage (Research→Plan→Production).
-  Planner agents now actually run in Stages 1-2 (were config-only). Multi-agent validation with
-  Reviewer+Researcher tier 1, Manager tiebreaker tier 2, 1 rework iteration.
-- **LLM thinking budget**: Activated `THINKING_MODEL_IDS` (22 models across 7 families). Chat
-  Completions (`chat_template_kwargs`) + Anthropic (`thinking` parameter) dispatch. ThinkingSlider
-  added to SettingsPanel. Thinking content extracted and emitted via Socket.IO.
-- **10 medium/polish items shipped**: Balance low warning ($2.50 threshold, header pill), run-level
-  credit estimate (confirm dialog), subscription management (Paddle portal button on AccountPage +
-  BillingPage), run timeout (RUN_TIMEOUT_SECONDS env var, run_timeout event), notifications stub
-  (DB table + API + AccountPage toggles), OpenRouter activation (PROVIDER env toggle), mobile layout
-  (sidebar collapses <1024px), theme CSS vars on billing/account pages, heartbeat indicator
-  (Agent.lastActivity), Vercel WebSocket proxying (already documented).
+- Walked every backend + frontend + config + test file. Identified ~30 issues across
+  efficiency / correctness / UX. Fixed 18 inline, documented 9 architectural items in
+  `AUDIT_REMAINING.md`. See `TODO.md` "Second Full Codebase Audit (2026-05-22)" for the
+  full list with file references.
+- **Critical fixes**:
+  - Removed duplicate LLM call in `_run_agent_loop` (was hitting Zen 2× per task)
+  - Fixed `SharedTaskList.add_task` id drift between memory and DB
+  - Made `docs_search` non-blocking (`asyncio.to_thread` + skip-list of noise dirs)
+  - Made auth cookie SameSite configurable so split-origin deploys (Vercel↔Render)
+    can authenticate Socket.IO
+- **Bug fixes**: dotfile uploads, OAuth state cookie leak, `_run_with_retry`
+  NameError with `max_retries=0`, account delete missing audit-table cascade,
+  dead Socket.IO listeners removed.
+- **Perf**: `Sidebar` memoised, `LiveActivity` key bug, BillingPage's wasteful
+  duplicate Socket.IO connection removed.
 
 **State of the codebase:**
 - ruff: 0 errors across `backend/` and `tests/`
-- TypeScript: `tsc --noEmit` and `npm run build` pass clean
-- Python tests: 66 passed, 3 integration skipped (need running backend, expected)
-- All 22 audit items from AUDIT_REMAINING.md resolved
-- HARNESS_REVIEW.md: Phases A, B, C all shipped; items #1-10 implemented
-- Reviewer agent is load-bearing, emitting real Socket.IO events
-- Agents can search uploaded + generated files via `<search>` blocks
-- Crash recovery: `.taskmesh/current.md` snapshots + `run_resumable` event
-- Thinking budget: active on 22 models, slider in SettingsPanel, reasoning content surfaced
-- Credit flow: low-balance warning in header, cost estimate before run, timeout protection
+- TypeScript: `tsc --noEmit` clean, `npm run build` builds in ~600ms
+- Python tests: 66 passed, 3 integration skipped (need running backend)
+- HARNESS_REVIEW.md: Phases A, B, C all shipped
+- 18 audit items from the 2026-05-22 pass resolved inline
+- 9 architectural items deferred in `AUDIT_REMAINING.md` "Still open" table —
+  most are launch-blockers worth a discussion (multi-worker orchestrator dict,
+  config.json git-tracking, MODEL_PRICING drift, etc.) rather than defects
 
 **Next 3 concrete tasks:**
 1. Subscribe to OpenCode Zen at https://opencode.ai/zen → set `OPENCODE_GO_API_KEY` in `.env`
 2. Create Paddle account + wire up webhook → test full sign-up → subscribe → run flow
-3. End-to-end test: full user journey with real Zen API key
+3. Decide on the 9 deferred items in `AUDIT_REMAINING.md` before launch
 
 **Known broken flows:**
 - Agent runs → auth error (OPENCODE_GO_API_KEY not yet set in .env)

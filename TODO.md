@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-21 (3-Stage Pipeline + Thinking + Polish items). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-22 (Second full-codebase audit). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -8,6 +8,27 @@
 ---
 
 ## ✅ Completed
+
+### Second Full Codebase Audit (2026-05-22)
+- ✅ **Duplicate LLM call removed** — `_run_agent_loop` was calling `agent.run()` twice per task (once directly, once through `_run_with_search`). Cut credit burn ~50% per executor task.
+- ✅ **`docs_search` no longer blocks event loop** — now offloaded via `asyncio.to_thread`; skips `.git`, `node_modules`, `venv`, `.taskmesh`, `dist`, `build`, `__pycache__`, etc. New `search_docs_async()` helper.
+- ✅ **Dead Socket.IO listeners removed** — `reviewer_started` / `reviewer_result` / `reviewer_retry` never emitted by backend; deleted handlers, reducer cases, action variants.
+- ✅ **BillingPage WebSocket dependency removed** — was opening a duplicate Socket.IO connection just to read `state.running`; replaced with a flat 30s usage poll.
+- ✅ **File-upload dotfile bug** — `validate_filename` rejected all dotfiles even though `ALLOWED_EXTENSIONS` listed `.gitignore` / `.env.example`; now explicitly whitelisted.
+- ✅ **`load_config(user_id)` event-loop landmine** — removed `asyncio.get_event_loop().run_until_complete` from a sync function that could be invoked under an active loop. Per-user config now exclusively async via `_load_user_config`.
+- ✅ **SharedTaskList ID drift** — `add_task` now stores the DB row id as the canonical id in memory too; `start_task` / `complete_task` lookups no longer miss when handles mix.
+- ✅ **DB claim state matches memory** — `_claim_db` sets `status="claimed"` (not `in_progress`); `start_task` performs the documented `claimed → in_progress` transition. `recover_stale_claims` now also catches rows that crashed before `start_task` ran.
+- ✅ **OAuth state cookie cleanup** — Google callback was leaking the one-shot `oauth_state` cookie; now `delete_cookie`'d like GitHub.
+- ✅ **`_run_with_retry` NameError fix** — initialised `attempt = 0` before the for-loop so `max_retries=0` no longer crashes.
+- ✅ **docs.search audit row semantics clarified** — comment + explicit telemetry fields (`_attempts`, `_duration_ms`) so the ActionTool row no longer looks like a failure.
+- ✅ **`LiveActivity` key={i} → composite key** — removes React anti-pattern that caused unnecessary remounts when the rolling 60-event window evicted entries.
+- ✅ **`startProject` confirm dialog fix** — the confirm was misleading (the backend had already started). Replaced with a non-blocking `alert` + improved error messages for `no_subscription` / `no_credits` / `already running`.
+- ✅ **Account deletion cascade fix** — `delete_account` now also removes `ActionFile`, `ActionTool`, `Task`, `CoordinatorEvent`, `TaskAcceptance`, `Notification` rows scoped to the user's runs.
+- ✅ **Cookie SameSite configurable** — new `COOKIE_SAMESITE` env var; defaults to `strict` (local dev), set to `none` for split-origin Vercel↔Render deploys so Socket.IO can authenticate.
+- ✅ **`Sidebar` memoisation** — `flattenAcceptance` and `mergedVerdicts` wrapped in `useMemo`.
+- ✅ **`ReviewerPanel` no longer hides itself** when reviewer state is empty but acceptance criteria exist.
+- ✅ ruff clean (0 errors), TypeScript build clean, `pytest tests/test_improvements.py -v` → 66 passed, 3 integration skipped.
+- ✅ `.env.example` updated to document `COOKIE_SAMESITE`, `CORS_ALLOWED_ORIGINS`, `ENVIRONMENT`, `ADMIN_BYPASS_KEY`.
 
 ### Full Codebase Audit (2026-05-21)
 - ✅ Three-pass audit complete (efficiency, bugs/security, UX); see AUDIT_REMAINING.md for surviving design questions

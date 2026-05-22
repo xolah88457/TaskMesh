@@ -35,13 +35,21 @@ _MIME_BY_EXT: dict[str, str] = {
 }
 
 
+_WHITELISTED_DOTFILES = frozenset({".gitignore", ".env.example"})
+
+
 def validate_filename(filename: str) -> str:
-    """Reject empty, dotfile, path traversal, invalid characters.
-    Returns stripped filename on success."""
+    """Reject empty, unsafe dotfile, path traversal, invalid characters.
+    Returns stripped filename on success.
+
+    A small set of dotfiles (`.gitignore`, `.env.example`) is explicitly
+    whitelisted — these are meaningful design inputs and were also listed in
+    ALLOWED_EXTENSIONS. All other dotfiles are still rejected.
+    """
     name = filename.strip()
     if not name:
         raise ValueError("Filename cannot be empty")
-    if name.startswith("."):
+    if name.startswith(".") and name.lower() not in _WHITELISTED_DOTFILES:
         raise ValueError(f"Dotfiles not allowed: {name}")
     if "/" in name or "\\" in name:
         raise ValueError(f"Path traversal not allowed: {name}")

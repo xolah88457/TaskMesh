@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import AgentsList from './AgentsList'
 import TasksList from './TasksList'
 import Terminal from './Terminal'
@@ -8,7 +9,7 @@ import type {
   StageName, ValidationVerdict, ValidationResult, ReworkNotice,
 } from '../types'
 
-function _all_acceptance(tasks: Task[]): AcceptanceCriterion[] {
+function flattenAcceptance(tasks: Task[]): AcceptanceCriterion[] {
   const out: AcceptanceCriterion[] = []
   for (const t of tasks) {
     if (t.acceptance) out.push(...t.acceptance)
@@ -39,10 +40,16 @@ export default function Sidebar({
   validationVerdicts = [], validationResult = null, reworkNotice = null,
   onAddAgents,
 }: Props) {
-  const mergedVerdicts: ValidationVerdict[] = [
-    ...validationVerdicts,
-    ...(validationResult?.verdicts ?? []),
-  ].filter((v, i, arr) => arr.findIndex(x => x.agentId === v.agentId) === i)
+  const mergedVerdicts: ValidationVerdict[] = useMemo(
+    () => [
+      ...validationVerdicts,
+      ...(validationResult?.verdicts ?? []),
+    ].filter((v, i, arr) => arr.findIndex(x => x.agentId === v.agentId) === i),
+    [validationVerdicts, validationResult],
+  )
+
+  // Flatten acceptance criteria once per task-list change rather than on every render.
+  const acceptance = useMemo(() => flattenAcceptance(tasks), [tasks])
 
   return (
     <div
@@ -123,7 +130,7 @@ export default function Sidebar({
         </div>
       )}
 
-      <ReviewerPanel active={reviewerActive} result={reviewerResult} acceptance={_all_acceptance(tasks)} />
+      <ReviewerPanel active={reviewerActive} result={reviewerResult} acceptance={acceptance} />
 
       <div className="pt-3" style={{ borderTop: '1px solid var(--c-border)' }}>
         <Terminal lines={terminalLines} />

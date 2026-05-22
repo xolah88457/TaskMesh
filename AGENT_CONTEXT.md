@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-21 (3-Stage Pipeline + Thinking Budget + Polish — all items shipped)
+Last updated: 2026-05-22 (Second full-codebase audit — 18 fixes shipped + 9 architectural items deferred to AUDIT_REMAINING.md)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -326,6 +326,24 @@ BACKEND VARIABLES:
     Per-run timeout in seconds. Runs exceeding this are cancelled automatically.
     Default: 600 (10 minutes). Set to 0 to disable timeout.
     Emits run_timeout Socket.IO event on expiry.
+
+  COOKIE_SAMESITE
+    Optional. SameSite policy for the auth cookie. One of "strict" (default,
+    local dev), "lax", or "none". Use "none" for split-origin deploys
+    (e.g. Vercel frontend + Render backend) so Socket.IO's cross-site
+    WebSocket can carry the cookie. "none" forces Secure=true regardless
+    of ENVIRONMENT.
+
+  ENVIRONMENT
+    Optional. Set to "production" to force the auth cookie's Secure=true
+    flag and silence several dev-only RuntimeWarnings. Any other value
+    (including unset) is treated as non-production.
+
+  ADMIN_BYPASS_KEY
+    Optional. Master key for /api/billing/admin-bypass — granting the
+    authenticated user a Pro plan + $9999 credit balance without touching
+    Paddle. Used for internal testing only. Generate with:
+      python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 
 FRONTEND VARIABLES:
 
@@ -1841,9 +1859,85 @@ Check GitHub connection:
 SECTION 24: CURRENT STATUS — WHAT IS DONE AND WHAT REMAINS
 ================================================================================
 
-Last updated: 2026-05-21 (3-Stage Pipeline + Thinking Budget + Polish — all items complete)
+Last updated: 2026-05-22 (Second full-codebase audit — 18 fixes shipped + 9 architectural items deferred to AUDIT_REMAINING.md)
 This section tracks the real-world setup state for this specific deployment.
 Read this section first in a new session to know exactly where to pick up.
+
+--------------------------------------------------------------------------------
+DONE — Second full-codebase audit (2026-05-22)
+--------------------------------------------------------------------------------
+
+This pass was a three-pass walk over every backend, frontend, config, and test
+file. 18 concrete fixes landed; 9 architectural items were deferred to
+AUDIT_REMAINING.md with explicit notes on why.
+
+Critical
+[x] Duplicate `agent.run()` call per task removed from `_run_agent_loop`
+    (Was hitting Zen 2× per executor task — direct call + the call inside
+    `_run_with_search` — doubling token spend.)
+[x] `SharedTaskList.add_task` id consistency — memory copy now uses the DB
+    row id so `start_task` / `complete_task` lookups don't silently miss.
+[x] `_claim_db` sets status="claimed" (not "in_progress") to match the
+    documented state-machine; `recover_stale_claims` now also catches rows
+    that crashed before `start_task` ran (started_at IS NULL + created_at
+    older than cutoff).
+[x] `docs_search` non-blocking — `search_docs_async()` runs via
+    `asyncio.to_thread`; skip-list excludes `.git`, `node_modules`,
+    `venv`, `.taskmesh`, `dist`, `build`, `__pycache__`, etc.
+
+High
+[x] Auth cookie SameSite configurable — `COOKIE_SAMESITE` env var,
+    defaults to `strict` (local dev), set to `none` for split-origin
+    deploys (Vercel↔Render) so Socket.IO can authenticate the WebSocket.
+[x] Account deletion cascade — `delete_account` now scrubs the run-scoped
+    audit tables (`ActionFile`, `ActionTool`, `Task`, `CoordinatorEvent`,
+    `TaskAcceptance`) plus `Notification`. No more orphaned rows.
+[x] Dead Socket.IO listeners removed — `reviewer_started`,
+    `reviewer_result`, `reviewer_retry` were never emitted (replaced by
+    `validation_verdict` / `validation_complete`).
+
+Medium
+[x] BillingPage no longer opens a duplicate WebSocket — flat 30s usage
+    poll covers the same UX. The `useSocket` import is gone.
+[x] `validate_filename` accepts whitelisted dotfiles (`.gitignore`,
+    `.env.example`) — they were blocked despite being in
+    `ALLOWED_EXTENSIONS`.
+[x] `load_config(user_id)` event-loop landmine removed — was calling
+    `asyncio.get_event_loop().run_until_complete` from a sync function
+    that could be invoked under an active loop. Per-user DB config now
+    exclusively async via `_load_user_config` in routes.py.
+[x] `startProject` confirm dialog replaced with non-blocking alert; error
+    messages added for `no_subscription`, `no_credits`, `already running`.
+
+Low
+[x] Google OAuth `oauth_state` cookie now deleted post-verification
+    (GitHub callback already did this).
+[x] `_run_with_retry` no longer NameErrors when `max_retries=0`.
+[x] `LiveActivity` uses composite key (time + agent + index) — fixes
+    React anti-pattern that caused unnecessary remounts.
+[x] `Sidebar` memoises `flattenAcceptance` and `mergedVerdicts`.
+[x] `ReviewerPanel` no longer hides itself when reviewer state is empty
+    but acceptance criteria exist (the panel's only live content today).
+[x] docs.search audit row now logs explicit `_status="ok"` /
+    `_attempts=1` telemetry so it doesn't look like a failure.
+
+Verification
+[x] ruff check backend tests → All checks passed!
+[x] cd frontend && npx tsc --noEmit → 0 errors
+[x] cd frontend && npm run build → built in ~600ms (475 modules)
+[x] pytest tests/test_improvements.py -v → 66 passed, 3 integration
+    skipped (as expected — need running backend)
+
+Deferred to AUDIT_REMAINING.md (architectural — not defects)
+- _orchestrators dict is per-process (not multi-worker safe)
+- calc_cost_cents rounds <0.5¢ to 1¢ (minimum-billable-unit)
+- agent-team.config.json committed with API key risk
+- MODEL_PRICING hand-maintained, drifts from Zen
+- SettingsPanel duplicates backend model metadata
+- Single-region Cloud SQL (infra, not code)
+- Bundle size 527 KB pre-gzip (over Vite's 500 KB warning)
+- ProjectState has dead `reviewerActive` / `reviewerResult` fields
+- No app-level rate limit on /start-project
 
 --------------------------------------------------------------------------------
 DONE — Core infrastructure
