@@ -194,6 +194,17 @@ async def google_auth_url(request: Request):
 @router.get("/google/callback")
 async def google_callback(request: Request, code: str, state: str = ""):
     """Exchange Google OAuth code for user info, upsert user, issue JWT, redirect to frontend."""
+    print("[auth] Google callback hit — code=%s... state=%s...", code[:10] if code else "", state[:10] if state else "", flush=True)
+    try:
+        return await _google_callback_impl(request, code, state)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("Google callback: unhandled exception")
+        raise HTTPException(status_code=500, detail=f"Internal error: {type(exc).__name__}: {exc}")
+
+
+async def _google_callback_impl(request: Request, code: str, state: str) -> RedirectResponse:
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
 
@@ -327,6 +338,17 @@ async def github_auth_url(request: Request):
 @router.get("/github/callback")
 async def github_callback(request: Request, code: str, state: str = ""):
     """Exchange GitHub OAuth code for user info, upsert user, issue JWT, redirect to frontend."""
+    print("[auth] GitHub callback hit — code=%s... state=%s...", code[:10] if code else "", state[:10] if state else "", flush=True)
+    try:
+        return await _github_callback_impl(request, code, state)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("GitHub callback: unhandled exception")
+        raise HTTPException(status_code=500, detail=f"Internal error: {type(exc).__name__}: {exc}")
+
+
+async def _github_callback_impl(request: Request, code: str, state: str) -> RedirectResponse:
     if not GITHUB_AUTH_CLIENT_ID or not GITHUB_AUTH_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="GitHub login not configured")
 
