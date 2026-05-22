@@ -98,11 +98,13 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str = ""
+    remember_me: bool = False
 
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+    remember_me: bool = False
 
 
 @router.post("/register")
@@ -140,7 +142,7 @@ async def register(body: RegisterRequest):
 
     token = create_token(user_id, email, user_name)
     response = JSONResponse({"user": {"id": user_id, "email": email, "name": user_name}})
-    set_token_cookie(response, token)
+    set_token_cookie(response, token, remember_me=body.remember_me)
     return response
 
 
@@ -165,7 +167,7 @@ async def login(body: LoginRequest):
 
     token = create_token(user.id, user.email, user.name or "")
     response = JSONResponse({"user": {"id": user.id, "email": user.email, "name": user.name}})
-    set_token_cookie(response, token)
+    set_token_cookie(response, token, remember_me=body.remember_me)
     return response
 
 
@@ -306,9 +308,10 @@ async def _google_callback_impl(request: Request, code: str, state: str) -> Redi
     jwt_token = create_token(user_id, email, name)
     # Pass JWT in URL hash so it never hits a server log.
     # The HttpOnly cookie is set alongside for XSS-safe auth.
+    # OAuth always remembers (7-day cookie) — standard for social login.
     frontend_url = _get_frontend_url(request)
     response = RedirectResponse(f"{frontend_url}/auth/callback#{jwt_token}")
-    set_token_cookie(response, jwt_token)
+    set_token_cookie(response, jwt_token, remember_me=True)
     # Clear the one-shot anti-CSRF state cookie now that it's been verified.
     # (GitHub callback already does this; Google was leaving it behind.)
     response.delete_cookie("oauth_state", path="/api/auth")
@@ -463,7 +466,7 @@ async def _github_callback_impl(request: Request, code: str, state: str) -> Redi
     jwt_token = create_token(user_id, email, name)
     frontend_url = _get_frontend_url(request)
     response = RedirectResponse(f"{frontend_url}/auth/callback#{jwt_token}")
-    set_token_cookie(response, jwt_token)
+    set_token_cookie(response, jwt_token, remember_me=True)
     response.delete_cookie("oauth_state", path="/api/auth")
     return response
 

@@ -10,6 +10,7 @@ export default function RegisterPage() {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm]   = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
@@ -52,7 +53,7 @@ export default function RegisterPage() {
       const r = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name }),
+        body: JSON.stringify({ email, password, name, remember_me: rememberMe }),
       })
       const data = await r.json()
       if (!r.ok) {
@@ -161,6 +162,20 @@ export default function RegisterPage() {
                 outline: 'none',
               }}
             />
+          </div>
+
+          <div className="flex items-center gap-2 mt-1">
+            <input
+              type="checkbox"
+              id="remember-me-reg"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              className="w-3 h-3 rounded"
+              style={{ accentColor: 'var(--c-accent)' }}
+            />
+            <label htmlFor="remember-me-reg" className="text-[10px] cursor-pointer select-none" style={{ color: 'var(--c-text-3)' }}>
+              Remember me for 7 days
+            </label>
           </div>
 
           {error && (

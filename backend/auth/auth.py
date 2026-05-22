@@ -55,23 +55,39 @@ def _cookie_samesite() -> str:
     return val
 
 
-def set_token_cookie(response: Response, token: str, max_age_days: int = _TOKEN_DAYS) -> None:
-    """Set the JWT in an HttpOnly cookie. SameSite is configurable for
-    split-origin deployments — see _cookie_samesite()."""
+def set_token_cookie(
+    response: Response,
+    token: str,
+    max_age_days: int | None = _TOKEN_DAYS,
+    remember_me: bool = False,
+) -> None:
+    """Set the JWT in an HttpOnly cookie.
+
+    When *remember_me* is False, the cookie is a session cookie (no max_age)
+    and is deleted when the browser closes. When True, the cookie expires
+    after 7 days (MAX_REMEMBER_DAYS).
+
+    SameSite is configurable for split-origin deployments — see _cookie_samesite()."""
     samesite = _cookie_samesite()
-    # samesite=none requires Secure=true per the spec. Force secure=true in
-    # that case even if ENVIRONMENT is unset, otherwise the cookie is silently
-    # rejected by modern browsers.
     secure = os.environ.get("ENVIRONMENT") == "production" or samesite == "none"
-    response.set_cookie(
+    # Session cookie: no max_age/expires → deleted when browser closes
+    # Remember-me: 7-day cookie
+    max_days: int | None = None
+    if remember_me:
+        max_days = 7
+    elif max_age_days is not None and max_age_days > 0:
+        max_days = max_age_days
+    cookie_kwargs: dict = dict(
         key="token",
         value=token,
         httponly=True,
         secure=secure,
         samesite=samesite,
-        max_age=max_age_days * 86400,
         path="/",
     )
+    if max_days is not None:
+        cookie_kwargs["max_age"] = max_days * 86400
+    response.set_cookie(**cookie_kwargs)
 
 
 def hash_password(password: str) -> str:
