@@ -66,13 +66,19 @@ def _get_base_url(request: Request) -> str:
 def _oauth_redirect_uri(request: Request, env_var: str, path: str) -> str:
     """Build the OAuth redirect URI for a given callback path.
 
-    Uses the env var if explicitly configured, otherwise derives the
-    URI from the incoming request so it auto-matches the environment
-    (dev → localhost, prod → render.com, etc.).
+    Priority:
+    1. Explicit env var override (GOOGLE_REDIRECT_URI / GITHUB_AUTH_REDIRECT_URI)
+    2. FRONTEND_URL + path — routes OAuth callbacks through the proxy so
+       cookies stay on a single origin (critical for split-origin deploys
+       like Vercel+Render where the /url response sets cookies on the
+       frontend domain but Google/GitHub redirect to the callback directly)
+    3. Derive from incoming request headers (works for same-origin dev)
     """
     explicit = os.environ.get(env_var, "")
     if explicit:
         return explicit
+    if FRONTEND_URL:
+        return f"{FRONTEND_URL.rstrip('/')}{path}"
     return f"{_get_base_url(request)}{path}"
 
 
