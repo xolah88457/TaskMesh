@@ -10,10 +10,10 @@ Flow:
      which creates a branch, commits all output files, and opens a PR
 
 Environment variables required:
-  GITHUB_CLIENT_ID     — GitHub OAuth app Client ID
+  GITHUB_CLIENT_ID     — GitHub OAuth app Client ID (code-push, not login)
   GITHUB_CLIENT_SECRET — GitHub OAuth app Client Secret
-  GITHUB_REDIRECT_URI  — Must match the redirect URI registered in GitHub app
-                         e.g. http://localhost:8000/api/github/callback
+  GITHUB_REDIRECT_URI  — (optional) override auto-detected callback URL
+  FRONTEND_URL         — (optional) frontend URL for post-OAuth redirect
 
 The GitHub token is stored encrypted in the DB (UserGitHub table).
 For simplicity, this implementation stores it in plaintext — add encryption
@@ -22,6 +22,7 @@ before going to production (use Python cryptography.fernet).
 import base64
 import hashlib
 import hmac
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -33,14 +34,42 @@ from pydantic import BaseModel
 from ..auth.auth import require_auth
 
 router = APIRouter(prefix="/github")
+_log = logging.getLogger(__name__)
 
 GITHUB_CLIENT_ID     = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-GITHUB_REDIRECT_URI  = os.environ.get("GITHUB_REDIRECT_URI", "http://localhost:8000/api/github/callback")
-FRONTEND_URL         = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+GITHUB_REDIRECT_URI  = os.environ.get("GITHUB_REDIRECT_URI", "")
+FRONTEND_URL         = os.environ.get("FRONTEND_URL", "")
 SECRET_KEY           = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 # Note: GITHUB_CLIENT_ID/SECRET here are for code-push OAuth.
 # Login OAuth uses GITHUB_AUTH_CLIENT_ID/SECRET in backend/api/auth.py.
+
+
+def _get_base_url(request: Request) -> str:
+    """Derive the backend's public URL from the incoming request.
+    Handles reverse proxies (Render, etc.) via X-Forwarded-* headers."""
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme or "http")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost:8000")
+    return f"{scheme}://{host}"
+
+
+def _github_redirect_uri(request: Request) -> str:
+    """Build the GitHub OAuth redirect URI (code-push flow).
+    Uses env var if explicitly set, otherwise derives from the request."""
+    if GITHUB_REDIRECT_URI:
+        return GITHUB_REDIRECT_URI
+    return f"{_get_base_url(request)}/api/github/callback"
+
+
+def _frontend_redirect_url(request: Request) -> str:
+    """Build the frontend URL for post-OAuth redirects.
+    Uses FRONTEND_URL env var if set, otherwise falls back to same-origin."""
+    if FRONTEND_URL:
+        return FRONTEND_URL
+    origin = request.headers.get("origin", "")
+    if origin and origin not in ("null", ""):
+        return origin
+    return _get_base_url(request)
 
 
 def _sign_state(user_id: str) -> str:
@@ -74,19 +103,21 @@ class PushRequest(BaseModel):
 # ── OAuth connect ─────────────────────────────────────────────────────────────
 
 @router.get("/auth")
-async def github_auth(user: dict = Depends(require_auth)):
+async def github_auth(request: Request, user: dict = Depends(require_auth)):
     """Return the GitHub OAuth authorization URL as JSON (frontend redirects using window.location.href)."""
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=503, detail="GitHub OAuth not configured")
     user_id = user.get("sub", "")
     state   = _sign_state(user_id)
+    redirect_uri = _github_redirect_uri(request)
     url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
-        f"&redirect_uri={GITHUB_REDIRECT_URI}"
+        f"&redirect_uri={redirect_uri}"
         f"&scope=repo"
         f"&state={state}"
     )
+    _log.info("GitHub code-push OAuth URL built: redirect_uri=%s", redirect_uri)
     return {"auth_url": url}
 
 
@@ -97,6 +128,7 @@ async def github_callback(code: str, state: str, request: Request):
         raise HTTPException(status_code=503, detail="GitHub OAuth not configured")
 
     user_id = _verify_state(state)
+    redirect_uri = _github_redirect_uri(request)
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -105,12 +137,14 @@ async def github_callback(code: str, state: str, request: Request):
                 "client_id":     GITHUB_CLIENT_ID,
                 "client_secret": GITHUB_CLIENT_SECRET,
                 "code":          code,
-                "redirect_uri":  GITHUB_REDIRECT_URI,
+                "redirect_uri":  redirect_uri,
             },
             headers={"Accept": "application/json"},
             timeout=15,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            _log.error("GitHub code-push token exchange failed (status %s): %s", resp.status_code, resp.text)
+            raise HTTPException(status_code=400, detail="Failed to exchange GitHub code")
         token_data = resp.json()
 
     access_token = token_data.get("access_token")
@@ -143,7 +177,7 @@ async def github_callback(code: str, state: str, request: Request):
                 row.access_token  = access_token
                 row.connected_at  = datetime.now(timezone.utc)
 
-    return RedirectResponse(f"{FRONTEND_URL}/?github=connected")
+    return RedirectResponse(f"{_frontend_redirect_url(request)}/?github=connected")
 
 
 @router.get("/status")

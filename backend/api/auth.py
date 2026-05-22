@@ -14,13 +14,18 @@ Environment variables required:
   SECRET_KEY                — signs JWTs
   GOOGLE_CLIENT_ID          — GCP Console → APIs & Services → Credentials
   GOOGLE_CLIENT_SECRET      — same location
-  GOOGLE_REDIRECT_URI       — e.g. http://localhost:8000/api/auth/google/callback
-  GITHUB_AUTH_CLIENT_ID     — GitHub OAuth App for login (can be same app as push, different redirect)
+  GOOGLE_REDIRECT_URI       — (optional) override auto-detected callback URL
+  GITHUB_AUTH_CLIENT_ID     — GitHub OAuth App for login
   GITHUB_AUTH_CLIENT_SECRET — same app
-  GITHUB_AUTH_REDIRECT_URI  — e.g. http://localhost:8000/api/auth/github/callback
-  FRONTEND_URL              — where to redirect after OAuth (e.g. http://localhost:5173)
+  GITHUB_AUTH_REDIRECT_URI  — (optional) override auto-detected callback URL
+  FRONTEND_URL              — (optional) frontend URL for post-OAuth redirect
+                               Required for split-origin (Vercel+Render).
+                               Omit for same-origin or local dev (auto-derived).
+  COOKIE_SAMESITE           — "strict" (default), "lax", or "none"
+  ENVIRONMENT               — "production" forces Secure cookies
 """
 import hmac
+import logging
 import os
 import secrets
 import uuid
@@ -34,16 +39,58 @@ from pydantic import BaseModel
 from ..auth.auth import hash_password, verify_password, create_token, require_auth, set_token_cookie
 
 router = APIRouter(prefix="/auth")
+_log = logging.getLogger(__name__)
 
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI  = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+GOOGLE_REDIRECT_URI  = os.environ.get("GOOGLE_REDIRECT_URI", "")
 
 GITHUB_AUTH_CLIENT_ID     = os.environ.get("GITHUB_AUTH_CLIENT_ID", "")
 GITHUB_AUTH_CLIENT_SECRET = os.environ.get("GITHUB_AUTH_CLIENT_SECRET", "")
-GITHUB_AUTH_REDIRECT_URI  = os.environ.get("GITHUB_AUTH_REDIRECT_URI", "http://localhost:8000/api/auth/github/callback")
+GITHUB_AUTH_REDIRECT_URI  = os.environ.get("GITHUB_AUTH_REDIRECT_URI", "")
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "")
+
+
+def _get_base_url(request: Request) -> str:
+    """Derive the backend's public URL from the incoming request.
+
+    Handles reverse proxies (Render, Cloud Run, etc.) via
+    X-Forwarded-Proto and X-Forwarded-Host headers.
+    """
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme or "http")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost:8000")
+    return f"{scheme}://{host}"
+
+
+def _oauth_redirect_uri(request: Request, env_var: str, path: str) -> str:
+    """Build the OAuth redirect URI for a given callback path.
+
+    Uses the env var if explicitly configured, otherwise derives the
+    URI from the incoming request so it auto-matches the environment
+    (dev → localhost, prod → render.com, etc.).
+    """
+    explicit = os.environ.get(env_var, "")
+    if explicit:
+        return explicit
+    return f"{_get_base_url(request)}{path}"
+
+
+def _get_frontend_url(request: Request) -> str:
+    """Derive the frontend URL for post-OAuth redirects.
+
+    Uses FRONTEND_URL env var if set (required for split-origin deploys
+    like Vercel+Render). Otherwise assumes same-origin and falls back to
+    the backend's own base URL (works for local dev).
+    """
+    if FRONTEND_URL:
+        return FRONTEND_URL
+    # Try Origin header — useful when the browser sends it
+    origin = request.headers.get("origin", "")
+    if origin and origin not in ("null", ""):
+        return origin
+    # Fall back to same-origin (local dev)
+    return _get_base_url(request)
 
 
 class RegisterRequest(BaseModel):
@@ -122,21 +169,24 @@ async def login(body: LoginRequest):
 
 
 @router.get("/google/url")
-async def google_auth_url():
+async def google_auth_url(request: Request):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
+    redirect_uri = _oauth_redirect_uri(request, "GOOGLE_REDIRECT_URI", "/api/auth/google/callback")
+    state = secrets.token_hex(16)
     url = (
         "https://accounts.google.com/o/oauth2/v2/auth"
         f"?client_id={GOOGLE_CLIENT_ID}"
-        f"&redirect_uri={GOOGLE_REDIRECT_URI}"
+        f"&redirect_uri={redirect_uri}"
         "&response_type=code"
         "&scope=openid%20email%20profile"
         "&access_type=offline"
         "&prompt=select_account"
-        f"&state={secrets.token_hex(16)}"
+        f"&state={state}"
     )
     response = JSONResponse({"auth_url": url})
-    response.set_cookie("oauth_state", url.split("&state=")[1], httponly=True, samesite="lax", max_age=300, path="/api/auth")
+    response.set_cookie("oauth_state", state, httponly=True, samesite="lax", max_age=300, path="/api/auth")
+    _log.info("Google OAuth URL built: redirect_uri=%s", redirect_uri)
     return response
 
 
@@ -146,11 +196,14 @@ async def google_callback(request: Request, code: str, state: str = ""):
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
 
+    redirect_uri = _oauth_redirect_uri(request, "GOOGLE_REDIRECT_URI", "/api/auth/google/callback")
+
     # Verify anti-CSRF state parameter. FastAPI always injects Request, so no
     # None-guard is needed; the previous `Request | None = None` annotation
     # tripped FastAPI's response-model analyser on Python 3.14.
     stored = request.cookies.get("oauth_state", "")
     if not stored or not hmac.compare_digest(stored, state):
+        _log.warning("Google OAuth: invalid state parameter (csrf or expired)")
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
@@ -161,12 +214,13 @@ async def google_callback(request: Request, code: str, state: str = ""):
                 "code":          code,
                 "client_id":     GOOGLE_CLIENT_ID,
                 "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri":  GOOGLE_REDIRECT_URI,
+                "redirect_uri":  redirect_uri,
                 "grant_type":    "authorization_code",
             },
             timeout=15,
         )
         if token_resp.status_code != 200:
+            _log.error("Google token exchange failed (status %s): %s", token_resp.status_code, token_resp.text)
             raise HTTPException(status_code=400, detail="Failed to exchange Google code")
         token_data = token_resp.json()
 
@@ -177,6 +231,7 @@ async def google_callback(request: Request, code: str, state: str = ""):
             timeout=10,
         )
         if userinfo_resp.status_code != 200:
+            _log.error("Google userinfo failed (status %s): %s", userinfo_resp.status_code, userinfo_resp.text)
             raise HTTPException(status_code=400, detail="Failed to get user info from Google")
         guser = userinfo_resp.json()
 
@@ -227,7 +282,8 @@ async def google_callback(request: Request, code: str, state: str = ""):
     jwt_token = create_token(user_id, email, name)
     # Pass JWT in URL hash so it never hits a server log.
     # The HttpOnly cookie is set alongside for XSS-safe auth.
-    response = RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
+    frontend_url = _get_frontend_url(request)
+    response = RedirectResponse(f"{frontend_url}/auth/callback#{jwt_token}")
     set_token_cookie(response, jwt_token)
     # Clear the one-shot anti-CSRF state cookie now that it's been verified.
     # (GitHub callback already does this; Google was leaving it behind.)
@@ -236,19 +292,22 @@ async def google_callback(request: Request, code: str, state: str = ""):
 
 
 @router.get("/github/url")
-async def github_auth_url():
+async def github_auth_url(request: Request):
     if not GITHUB_AUTH_CLIENT_ID:
         raise HTTPException(status_code=503, detail="GitHub login not configured")
+    redirect_uri = _oauth_redirect_uri(request, "GITHUB_AUTH_REDIRECT_URI", "/api/auth/github/callback")
+    state = secrets.token_hex(16)
     url = (
         "https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_AUTH_CLIENT_ID}"
-        f"&redirect_uri={GITHUB_AUTH_REDIRECT_URI}"
+        f"&redirect_uri={redirect_uri}"
         "&scope=user:email"
         "&prompt=select_account"
-        f"&state={secrets.token_hex(16)}"
+        f"&state={state}"
     )
     response = JSONResponse({"auth_url": url})
-    response.set_cookie("oauth_state", url.split("&state=")[1], httponly=True, samesite="lax", max_age=300, path="/api/auth")
+    response.set_cookie("oauth_state", state, httponly=True, samesite="lax", max_age=300, path="/api/auth")
+    _log.info("GitHub OAuth URL built: redirect_uri=%s", redirect_uri)
     return response
 
 
@@ -258,11 +317,14 @@ async def github_callback(request: Request, code: str, state: str = ""):
     if not GITHUB_AUTH_CLIENT_ID or not GITHUB_AUTH_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="GitHub login not configured")
 
+    redirect_uri = _oauth_redirect_uri(request, "GITHUB_AUTH_REDIRECT_URI", "/api/auth/github/callback")
+
     # Verify anti-CSRF state parameter. FastAPI always injects Request — the
     # previous `Request | None = None` form was misinterpreted as a Pydantic
     # response model field on Python 3.14 and broke startup.
     stored = request.cookies.get("oauth_state", "")
     if not stored or not hmac.compare_digest(stored, state):
+        _log.warning("GitHub OAuth: invalid state parameter (csrf or expired)")
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
@@ -273,16 +335,18 @@ async def github_callback(request: Request, code: str, state: str = ""):
                 "client_id":     GITHUB_AUTH_CLIENT_ID,
                 "client_secret": GITHUB_AUTH_CLIENT_SECRET,
                 "code":          code,
-                "redirect_uri":  GITHUB_AUTH_REDIRECT_URI,
+                "redirect_uri":  redirect_uri,
             },
             headers={"Accept": "application/json"},
             timeout=15,
         )
         if token_resp.status_code != 200:
+            _log.error("GitHub token exchange failed (status %s): %s", token_resp.status_code, token_resp.text)
             raise HTTPException(status_code=400, detail="Failed to exchange GitHub code")
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
         if not access_token:
+            _log.error("GitHub OAuth error: %s", token_data)
             raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {token_data.get('error_description', 'unknown')}")
 
         # Get GitHub user info
@@ -292,6 +356,7 @@ async def github_callback(request: Request, code: str, state: str = ""):
             timeout=10,
         )
         if user_resp.status_code != 200:
+            _log.error("GitHub user info failed (status %s): %s", user_resp.status_code, user_resp.text)
             raise HTTPException(status_code=400, detail="Failed to get user info from GitHub")
         gh_user = user_resp.json()
 
@@ -348,7 +413,8 @@ async def github_callback(request: Request, code: str, state: str = ""):
         user_id = user_row.id
 
     jwt_token = create_token(user_id, email, name)
-    response = RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
+    frontend_url = _get_frontend_url(request)
+    response = RedirectResponse(f"{frontend_url}/auth/callback#{jwt_token}")
     set_token_cookie(response, jwt_token)
     response.delete_cookie("oauth_state", path="/api/auth")
     return response
