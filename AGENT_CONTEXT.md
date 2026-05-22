@@ -1267,21 +1267,22 @@ ENTRY POINT (frontend/src/main.tsx):
 
 APP ROUTING (frontend/src/App.tsx):
   ProtectedRoute: reads user from useAuthContext(). If null and not AUTH_DISABLED, navigates to /login.
-  BillingGate: wraps MainApp only. Fetches /api/billing/usage on mount. If plan="none", redirects
+  BillingGate: wraps Dashboard only. Fetches /api/billing/usage on mount. If plan="none", redirects
     to /billing. Skipped entirely if VITE_AUTH_DISABLED=true. Renders null while checking.
 
-  Routes:
+  Routes (post 2026-05-22 dashboard refactor):
     /login         -> LoginPage (public)
     /register      -> RegisterPage (public)
     /auth/callback -> AuthCallback (public)
-    /projects      -> ProjectsDashboard (protected)
+    /              -> ProtectedRoute > BillingGate > Dashboard (new TM dash landing page)
+    /project/:id   -> ProtectedRoute > Workspace (project-specific agent view, was MainApp)
     /billing       -> BillingPage (protected)
-    /account       -> AccountPage (protected)
-    /*             -> ProtectedRoute > BillingGate > MainApp
+    /settings      -> AccountPage (protected, was /account)
 
-  MainApp is a function inside App.tsx.
-  MainApp layout:
-    MatrixRain background (only if themeId is "default")
+  Workspace (was MainApp) is a function inside App.tsx.
+  Workspace layout:
+    Back to Dashboard link · breadcrumb · project controls · AgentNetwork · Sidebar · Activity
+    No billing/account navigation (those live on Dashboard).
     Header at top (includes account pill → /account)
     Horizontal split: canvas area (flex-1) + resizable Sidebar (180-520px, default 240px)
     Resize handle between canvas and sidebar (drag left-right)

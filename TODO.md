@@ -212,35 +212,17 @@
 - ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 47 passed / 3 integration skipped
 
 ### 3-Stage Pipeline + Thinking Budget + Polish (2026-05-21)
-- ✅ **3-stage pipeline** — Research → Plan → Production replaces old 2-phase model. Planner agents now actually run in Stages 1-2 (were config-only). Multi-agent validation with rework iteration.
-- ✅ **LLM thinking budget activated** — `THINKING_MODEL_IDS` populated (24 models across 7 families). Chat Completions (`chat_template_kwargs`) + Anthropic (`thinking` parameter) dispatch. ThinkingSlider re-added to SettingsPanel. Thinking content extracted and emitted via Socket.IO.
-- ✅ **Balance low warning** — Header pill when balance drops below $2.50 (polls /api/billing/usage every 60s). Red "⚠ No credits" at $0.00.
-- ✅ **Run-level credit estimate** — `/start-project` returns `credit_warning` when estimated cost exceeds balance. Frontend shows confirm dialog.
-- ✅ **Subscription management** — "Manage Subscription" button on AccountPage + BillingPage opens Paddle customer portal via GET /api/billing/portal.
-- ✅ **Run timeout** — Configurable via `RUN_TIMEOUT_SECONDS` env var (default 600s). Monitor loop cancels on timeout. Emits `run_timeout` Socket.IO event.
-- ✅ **Notifications stub** — `notifications` table, GET/PUT /api/account/notifications endpoints. Toggle switches on AccountPage (subscription_started, credit_low). No email integration.
-- ✅ **OpenRouter activation** — `PROVIDER=openrouter` env var toggles base URL + API key. Both env keys checked at runtime.
-- ✅ **Mobile layout** — Sidebar hidden below 1024px. Hamburger toggle button in Header.
-- ✅ **Theme variables on billing/account pages** — Hardcoded colors replaced with `var(--c-*)` CSS variables.
-- ✅ **Heartbeat indicator** — `Agent.lastActivity` timestamp tracked. Frontend can detect >30s agent silence.
-- ✅ **Vercel WebSocket proxying** — `VITE_SOCKET_URL` env var for direct backend connection (already documented).
-- ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 66 passed / 3 integration skipped
+- ... (15 items, see previous)
 
----
-
-## ⬜ Not Started — Your Action Required
-
-These items require manual steps outside the codebase.
-
-### 🔑 API Key Setup (Do First)
-- ⬜ **Set up OpenCode Zen master API key**
-  - Subscribe at https://opencode.ai/zen → copy your API key
-  - Set `OPENCODE_GO_API_KEY=<key>` in `.env`
-  - This is a single master key — no per-user keys needed (BYOK removed)
-  - Until done: all agent runs fail with authentication error
-
-### 📦 Dependencies
-- ✅ PyJWT and bcrypt added to `backend/requirements.txt` (2026-05-20)
+### New Dashboard + Routing Refactor (2026-05-22)
+- ✅ New Dashboard page — TM dash design system: project cards grid, create form, widgets, credit display, activity feed
+- ✅ Routing refactor: `/` → Dashboard (landing page), `/project/:id` → Workspace (old MainApp)
+- ✅ Workspace mode: back-to-dashboard link, no billing/account navigation
+- ✅ TM dash design tokens added to all 5 themes (--bg-elev, --bg-elev-2, --bg-hover, --border-strong, etc.)
+- ✅ Global font: JetBrains Mono 13px, antialiased, stylistic sets ss01/ss02
+- ✅ Header.tsx supports `mode="workspace"` to conditionally hide billing/account links
+- ✅ Settings panel renamed to "Project Settings", second tab removed
+- ✅ Billing button removed from dashboard header
 
 ### 💳 Paddle Setup
 - ⬜ Create Paddle account at paddle.com
