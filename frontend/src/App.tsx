@@ -8,6 +8,7 @@ import Sidebar from './components/Sidebar'
 import LiveActivity from './components/LiveActivity'
 import SettingsPanel from './components/SettingsPanel'
 import ProjectsDashboard from './pages/ProjectsDashboard'
+import Dashboard from './pages/Dashboard'
 import BillingPage from './pages/BillingPage'
 import AccountPage from './pages/AccountPage'
 import LoginPage from './pages/LoginPage'
@@ -17,6 +18,7 @@ import { useSocket } from './hooks/useSocket'
 import { useAuthContext } from './context/auth'
 import { useAuthFetch } from './hooks/useAuthFetch'
 import { getTheme, DEFAULT_THEME_ID } from './themes'
+import './dashboard.css'
 
 const SIDEBAR_MIN = 180
 const SIDEBAR_MAX = 520
@@ -64,9 +66,9 @@ function BillingGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
-// ── Main app shell ─────────────────────────────────────────────────────────────
+// ── Project workspace (was MainApp, now at /project/:id) ─────────────────────
 
-function MainApp() {
+function Workspace() {
   const { state, startProject, cancelProject } = useSocket()
   const [settingsOpen, setSettingsOpen]     = useState(false)
   const [sidebarWidth, setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
@@ -134,6 +136,7 @@ function MainApp() {
         onStop={cancelProject}
         onSettings={() => { setSettingsOpen(true) }}
         onToggleSidebar={() => setSidebarWidth(w => w > 0 ? 0 : SIDEBAR_DEFAULT)}
+        mode="workspace"
       />
 
       <div className="flex flex-1 overflow-hidden relative z-10 min-h-0">
@@ -192,13 +195,14 @@ export default function App() {
       <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Protected routes */}
-      <Route path="/projects" element={<ProtectedRoute><ProjectsDashboard /></ProtectedRoute>} />
-      <Route path="/billing"  element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
-      <Route path="/settings" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
-      <Route path="/*"        element={
+      <Route path="/projects"    element={<ProtectedRoute><ProjectsDashboard /></ProtectedRoute>} />
+      <Route path="/project/:id" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
+      <Route path="/billing"     element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
+      <Route path="/settings"    element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
+      <Route path="/"            element={
         <ProtectedRoute>
           <BillingGate>
-            <MainApp />
+            <Dashboard />
           </BillingGate>
         </ProtectedRoute>
       } />

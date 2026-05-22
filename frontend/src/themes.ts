@@ -15,6 +15,17 @@ export interface ThemeVars {
   '--c-terminal': string
   '--rain-color': string
   '--rain-bg': string
+  // TM dash elevation tokens (used by Dashboard)
+  '--bg-elev': string
+  '--bg-elev-2': string
+  '--bg-hover': string
+  '--border-strong': string
+  '--accent-soft': string
+  '--danger': string
+  '--danger-soft': string
+  '--warn': string
+  '--info': string
+  '--shadow': string
 }
 
 export interface Theme {
@@ -50,6 +61,16 @@ export const THEMES: Theme[] = [
       '--c-terminal':     'rgba(0,0,0,0.65)',
       '--rain-color':     '#22c55e',
       '--rain-bg':        'rgba(0,0,0,0.12)',
+      '--bg-elev':        '#111111',
+      '--bg-elev-2':      '#161616',
+      '--bg-hover':       '#1a1a1a',
+      '--border-strong':  '#3a3a3a',
+      '--accent-soft':    'rgba(74,222,128,0.12)',
+      '--danger':         '#ef4444',
+      '--danger-soft':    'rgba(239,68,68,0.12)',
+      '--warn':           '#f59e0b',
+      '--info':           '#60a5fa',
+      '--shadow':         '0 8px 24px rgba(0,0,0,0.6)',
     },
   },
   {
@@ -75,6 +96,16 @@ export const THEMES: Theme[] = [
       '--c-terminal':     'rgba(0,0,0,0.4)',
       '--rain-color':     '#4ade80',
       '--rain-bg':        'rgba(8,12,24,0.07)',
+      '--bg-elev':        '#111213',
+      '--bg-elev-2':      '#171819',
+      '--bg-hover':       '#1b1c1d',
+      '--border-strong':  '#3a3c3e',
+      '--accent-soft':    'rgba(74,222,128,0.12)',
+      '--danger':         '#ef4444',
+      '--danger-soft':    'rgba(239,68,68,0.12)',
+      '--warn':           '#f59e0b',
+      '--info':           '#60a5fa',
+      '--shadow':         '0 8px 24px rgba(0,0,0,0.6)',
     },
   },
   {
@@ -100,6 +131,16 @@ export const THEMES: Theme[] = [
       '--c-terminal':     'rgba(15,20,40,0.7)',
       '--rain-color':     '#7aa2f7',
       '--rain-bg':        'rgba(26,27,46,0.1)',
+      '--bg-elev':        '#1f2137',
+      '--bg-elev-2':      '#262844',
+      '--bg-hover':       '#2a2c49',
+      '--border-strong':  '#4a507f',
+      '--accent-soft':    'rgba(122,162,247,0.12)',
+      '--danger':         '#f7768e',
+      '--danger-soft':    'rgba(247,118,142,0.12)',
+      '--warn':           '#e0af68',
+      '--info':           '#7dcfff',
+      '--shadow':         '0 8px 24px rgba(0,0,0,0.5)',
     },
   },
   {
@@ -125,6 +166,16 @@ export const THEMES: Theme[] = [
       '--c-terminal':     'rgba(0,0,0,0.05)',
       '--rain-color':     'rgba(0,0,0,0.07)',
       '--rain-bg':        'rgba(240,242,245,0.18)',
+      '--bg-elev':        '#f5f3f0',
+      '--bg-elev-2':      '#eeebe6',
+      '--bg-hover':       '#e8e4de',
+      '--border-strong':  '#9c9c9c',
+      '--accent-soft':    'rgba(21,128,61,0.08)',
+      '--danger':         '#dc2626',
+      '--danger-soft':    'rgba(220,38,38,0.08)',
+      '--warn':           '#d97706',
+      '--info':           '#2563eb',
+      '--shadow':         '0 8px 24px rgba(0,0,0,0.1)',
     },
   },
   {
@@ -150,6 +201,16 @@ export const THEMES: Theme[] = [
       '--c-terminal':     'rgba(238,232,213,0.8)',
       '--rain-color':     'rgba(147,161,161,0.22)',
       '--rain-bg':        'rgba(253,246,227,0.22)',
+      '--bg-elev':        '#fdf4df',
+      '--bg-elev-2':      '#f8eecc',
+      '--bg-hover':       '#f2e6c2',
+      '--border-strong':  '#a39171',
+      '--accent-soft':    'rgba(133,153,0,0.08)',
+      '--danger':         '#dc322f',
+      '--danger-soft':    'rgba(220,50,47,0.08)',
+      '--warn':           '#b58900',
+      '--info':           '#268bd2',
+      '--shadow':         '0 8px 24px rgba(0,0,0,0.08)',
     },
   },
 ]

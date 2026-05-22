@@ -19,6 +19,7 @@ interface Props {
   onStop: () => void
   onSettings: () => void
   onToggleSidebar?: () => void
+  mode?: 'workspace'  // workspace mode hides billing/account links
 }
 
 interface UploadedFile {
@@ -36,7 +37,7 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-export default function Header({ project, sprint, feature, progress, elapsedSeconds, running, onStart, onStop, onSettings, onToggleSidebar }: Props) {
+export default function Header({ project, sprint, feature, progress, elapsedSeconds, running, onStart, onStop, onSettings, onToggleSidebar, mode }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { user }    = useAuthContext()
@@ -148,7 +149,13 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
       style={{ background: 'var(--c-surface-1)', borderColor: 'var(--c-border)' }}>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs font-mono shrink-0 h-7 self-center">
-        <img src={logo} alt="TaskMesh" className="h-5 w-auto shrink-0" />
+        {mode === 'workspace' ? (
+          <Link to="/" className="text-[var(--c-text-3)] hover:text-[var(--c-text-1)] transition-colors whitespace-nowrap flex items-center gap-1">
+            ← Dashboard
+          </Link>
+        ) : (
+          <img src={logo} alt="TaskMesh" className="h-5 w-auto shrink-0" />
+        )}
         {project && <>
           <span className="text-[var(--c-text-4)]">›</span>
           <span className="text-[var(--c-text-1)] whitespace-nowrap">{project}</span>
@@ -295,32 +302,36 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
           📁
         </Link>
 
-        {/* Account pill — links to /settings, never logs out */}
-        {showLowBalance && (
-          <Link
-            to="/billing"
-            className="text-[9px] font-mono px-2 py-1 rounded transition-colors flex items-center gap-1"
-            style={{
-              background: balanceCritical ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)',
-              border: `1px solid ${balanceCritical ? 'rgba(239,68,68,0.4)' : 'rgba(245,158,11,0.35)'}`,
-              color: balanceCritical ? '#ef4444' : '#f59e0b',
-            }}
-            title={balanceCritical ? 'Credits depleted — top up to run agents' : 'Credit balance is low'}
-          >
-            {balanceCritical ? '⚠ No credits' : '⚠ Low balance'}
-          </Link>
-        )}
-        {user && (
-          <Link
-            to="/settings"
-            className="text-[10px] font-mono px-2 py-1 rounded transition-colors max-w-[100px] truncate"
-            style={{ color: 'var(--c-text-3)', border: '1px solid var(--c-border)' }}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
-            title={user.email}
-          >
+        {/* Account pill — only on dashboard, not inside a project workspace */}
+        {mode !== 'workspace' && (
+          <>
+            {showLowBalance && (
+              <Link
+                to="/billing"
+                className="text-[9px] font-mono px-2 py-1 rounded transition-colors flex items-center gap-1"
+                style={{
+                  background: balanceCritical ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)',
+                  border: `1px solid ${balanceCritical ? 'rgba(239,68,68,0.4)' : 'rgba(245,158,11,0.35)'}`,
+                  color: balanceCritical ? '#ef4444' : '#f59e0b',
+                }}
+                title={balanceCritical ? 'Credits depleted — top up to run agents' : 'Credit balance is low'}
+              >
+                {balanceCritical ? '⚠ No credits' : '⚠ Low balance'}
+              </Link>
+            )}
+            {user && (
+              <Link
+                to="/settings"
+                className="text-[10px] font-mono px-2 py-1 rounded transition-colors max-w-[100px] truncate"
+                style={{ color: 'var(--c-text-3)', border: '1px solid var(--c-border)' }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'var(--c-text-1)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'var(--c-text-3)')}
+                title={user.email}
+              >
             {user.name || user.email.split('@')[0]}
           </Link>
+        )}
+          </>
         )}
       </div>
     </div>
