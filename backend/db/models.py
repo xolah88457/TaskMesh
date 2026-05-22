@@ -114,6 +114,7 @@ class UserCredits(Base):
     # plan values: none | starter | pro
     balance_cents   = Column(Integer,     nullable=False, default=0)
     subscription_id = Column(String(128), nullable=True)     # Paddle subscription ID
+    customer_id     = Column(String(128), nullable=True)     # Paddle customer ID (for portal)
     updated_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 

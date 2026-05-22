@@ -322,6 +322,8 @@ async def admin_bypass(body: AdminBypassRequest, user: dict = Depends(require_au
 @router.get("/portal")
 async def get_portal(user: dict = Depends(require_auth)):
     """Generate a Paddle customer portal URL for subscription management."""
+    import logging
+    _log = logging.getLogger(__name__)
     user_id = user.get("sub", "anonymous")
     if _AUTH_DISABLED or user_id == "dev-user":
         raise HTTPException(status_code=400, detail="Not available in dev mode")
@@ -332,18 +334,23 @@ async def get_portal(user: dict = Depends(require_auth)):
         if session is None:
             raise HTTPException(status_code=503, detail="Database not configured")
         credits = await session.get(UserCredits, user_id)
-        if not credits or not credits.subscription_id:
+        if not credits or not credits.customer_id:
+            _log.warning("Portal unavailable: user=%s plan=%s sub=%s cust=%s",
+                         user_id, credits.plan if credits else "none",
+                         credits.subscription_id if credits else "none",
+                         credits.customer_id if credits else "none")
             raise HTTPException(status_code=400, detail="No active subscription")
 
         try:
-            portal_data = await _paddle_post("/customers/portal-sessions", {
+            portal_data = await _paddle_post(f"/customers/{credits.customer_id}/portal-sessions", {
                 "subscription_id": credits.subscription_id,
             })
             portal_url = portal_data.get("data", {}).get("urls", {}).get("general", {}).get("url")
             if portal_url:
                 return {"portal_url": portal_url}
-        except Exception:
-            pass
+            _log.error("Paddle portal response missing URL: %s", portal_data)
+        except Exception as exc:
+            _log.exception("Paddle portal request failed")
 
     raise HTTPException(status_code=503, detail="Could not generate portal URL")
 
@@ -393,6 +400,7 @@ async def _upsert_credits(
     plan: str | None = None,
     add_cents: int = 0,
     subscription_id: str | None = None,
+    customer_id: str | None = None,
 ) -> None:
     """Create or update UserCredits for a user atomically."""
     from ..db.session import get_session
@@ -408,6 +416,7 @@ async def _upsert_credits(
                 plan=plan or "none",
                 balance_cents=add_cents,
                 subscription_id=subscription_id,
+                customer_id=customer_id,
                 updated_at=datetime.now(timezone.utc),
             )
             session.add(creds)
@@ -418,6 +427,8 @@ async def _upsert_credits(
                 creds.balance_cents += add_cents
             if subscription_id is not None:
                 creds.subscription_id = subscription_id
+            if customer_id is not None:
+                creds.customer_id = customer_id
             creds.updated_at = datetime.now(timezone.utc)
 
 
@@ -439,6 +450,7 @@ async def _handle_subscription_activated(event: dict) -> None:
     user_id  = custom.get("user_id", "")
     sub_id   = data.get("id", "")
     price_id = (data.get("items") or [{}])[0].get("price", {}).get("id", "")
+    cust_id  = data.get("customer_id", "")
 
     if not user_id:
         return
@@ -452,6 +464,7 @@ async def _handle_subscription_activated(event: dict) -> None:
         plan=plan,
         add_cents=_credits_for_plan(plan),
         subscription_id=sub_id,
+        customer_id=cust_id,
     )
 
 
@@ -463,6 +476,7 @@ async def _handle_subscription_updated(event: dict) -> None:
     sub_id   = data.get("id", "")
     status   = data.get("status", "")
     price_id = (data.get("items") or [{}])[0].get("price", {}).get("id", "")
+    cust_id  = data.get("customer_id", "")
 
     if not user_id or status != "active":
         return
@@ -476,6 +490,7 @@ async def _handle_subscription_updated(event: dict) -> None:
         plan=plan,
         add_cents=_credits_for_plan(plan),
         subscription_id=sub_id,
+        customer_id=cust_id,
     )
 
 

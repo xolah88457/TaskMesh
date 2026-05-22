@@ -70,4 +70,8 @@ async def _run_migrations() -> None:
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS config_json TEXT"
         ))
+        # Added 2026-05-22 — Paddle customer ID for subscription portal
+        await conn.execute(text(
+            "ALTER TABLE user_credits ADD COLUMN IF NOT EXISTS customer_id VARCHAR(128)"
+        ))
         # Add future column migrations here with a date comment
