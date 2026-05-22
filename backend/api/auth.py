@@ -141,17 +141,17 @@ async def google_auth_url():
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, state: str = "", request: "Request | None" = None):
+async def google_callback(request: Request, code: str, state: str = ""):
     """Exchange Google OAuth code for user info, upsert user, issue JWT, redirect to frontend."""
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
 
-    # Verify anti-CSRF state parameter
-    from fastapi import Request as _Request
-    if request and isinstance(request, _Request):
-        stored = request.cookies.get("oauth_state", "")
-        if not stored or not hmac.compare_digest(stored, state):
-            raise HTTPException(status_code=400, detail="Invalid state parameter")
+    # Verify anti-CSRF state parameter. FastAPI always injects Request, so no
+    # None-guard is needed; the previous `Request | None = None` annotation
+    # tripped FastAPI's response-model analyser on Python 3.14.
+    stored = request.cookies.get("oauth_state", "")
+    if not stored or not hmac.compare_digest(stored, state):
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
         # Exchange code for access token
@@ -253,16 +253,17 @@ async def github_auth_url():
 
 
 @router.get("/github/callback")
-async def github_callback(code: str, state: str = "", request: Request | None = None):
+async def github_callback(request: Request, code: str, state: str = ""):
     """Exchange GitHub OAuth code for user info, upsert user, issue JWT, redirect to frontend."""
     if not GITHUB_AUTH_CLIENT_ID or not GITHUB_AUTH_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="GitHub login not configured")
 
-    # Verify anti-CSRF state parameter
-    if request:
-        stored = request.cookies.get("oauth_state", "")
-        if not stored or not hmac.compare_digest(stored, state):
-            raise HTTPException(status_code=400, detail="Invalid state parameter")
+    # Verify anti-CSRF state parameter. FastAPI always injects Request — the
+    # previous `Request | None = None` form was misinterpreted as a Pydantic
+    # response model field on Python 3.14 and broke startup.
+    stored = request.cookies.get("oauth_state", "")
+    if not stored or not hmac.compare_digest(stored, state):
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
         # Exchange code for access token
