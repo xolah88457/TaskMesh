@@ -113,7 +113,7 @@ export default function AccountPage() {
       })
       const d = await r.json()
       if (!r.ok) { setNameMsg(d.detail ?? 'Failed'); setNameErr(true); return }
-      if (d.token) login(d.token)
+      if (d.token) login()
       setProfile(p => p ? { ...p, name: d.name } : p)
       setNameMsg('Name updated.')
     } catch { setNameMsg('Network error'); setNameErr(true) }
@@ -132,7 +132,7 @@ export default function AccountPage() {
       })
       const d = await r.json()
       if (!r.ok) { setEmailMsg(d.detail ?? 'Failed'); setEmailErr(true); return }
-      if (d.token) login(d.token)
+      if (d.token) login()
       setProfile(p => p ? { ...p, email: d.email } : p)
       setNewEmail(''); setEmailPw('')
       setEmailMsg('Email updated.')

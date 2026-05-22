@@ -9,6 +9,7 @@ export function useAuthFetch() {
       const token = await getToken()
       return fetch(url, {
         ...opts,
+        credentials: 'include',  // sends HttpOnly cookie for cross-origin requests
         headers: {
           ...(opts.headers ?? {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),

@@ -10,12 +10,20 @@ export interface Agent {
   model?: string
 }
 
+export interface AcceptanceCriterion {
+  id: string
+  criterion: string
+  met: boolean
+  note?: string
+}
+
 export interface Task {
   id: string
   title: string
   assignee: string
   tag: string
   done: boolean
+  acceptance?: AcceptanceCriterion[]
 }
 
 export interface LogEntry {

@@ -2,7 +2,15 @@ import AgentsList from './AgentsList'
 import TasksList from './TasksList'
 import Terminal from './Terminal'
 import ReviewerPanel from './ReviewerPanel'
-import type { Agent, Task, ReviewerResult } from '../types'
+import type { Agent, Task, ReviewerResult, AcceptanceCriterion } from '../types'
+
+function _all_acceptance(tasks: Task[]): AcceptanceCriterion[] {
+  const out: AcceptanceCriterion[] = []
+  for (const t of tasks) {
+    if (t.acceptance) out.push(...t.acceptance)
+  }
+  return out
+}
 
 interface Props {
   agents: Agent[]
@@ -46,7 +54,7 @@ export default function Sidebar({
         )}
       </div>
 
-      <ReviewerPanel active={reviewerActive} result={reviewerResult} />
+      <ReviewerPanel active={reviewerActive} result={reviewerResult} acceptance={_all_acceptance(tasks)} />
 
       <div className="pt-3" style={{ borderTop: '1px solid var(--c-border)' }}>
         <Terminal lines={terminalLines} />

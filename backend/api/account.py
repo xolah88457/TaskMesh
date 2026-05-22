@@ -11,9 +11,10 @@ Endpoints:
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ..auth.auth import require_auth, hash_password, verify_password, create_token
+from ..auth.auth import require_auth, hash_password, verify_password, create_token, set_token_cookie
 
 router = APIRouter(prefix="/account")
 
@@ -97,7 +98,9 @@ async def update_profile(body: UpdateProfileRequest, user: dict = Depends(requir
 
     # Issue a fresh token with the updated name
     new_token = create_token(user_id, user.get("email", ""), name)
-    return {"status": "updated", "name": name, "token": new_token}
+    response = JSONResponse({"status": "updated", "name": name, "token": new_token})
+    set_token_cookie(response, new_token)
+    return response
 
 
 @router.put("/email")
@@ -138,7 +141,9 @@ async def update_email(body: UpdateEmailRequest, user: dict = Depends(require_au
         user_row.email = new_email
 
     new_token = create_token(user_id, new_email, user.get("name", ""))
-    return {"status": "updated", "email": new_email, "token": new_token}
+    response = JSONResponse({"status": "updated", "email": new_email, "token": new_token})
+    set_token_cookie(response, new_token)
+    return response
 
 
 @router.put("/password")
@@ -193,7 +198,7 @@ async def get_zen_summary(user: dict = Depends(require_auth)):
         month_result = await session.execute(
             select(func.sum(ZenUsage.cost_cents))
             .where(ZenUsage.user_id == user_id)
-            .where(func.to_char(ZenUsage.created_at, "YYYY-MM") == year_month)
+            .where(ZenUsage.year_month == year_month)
         )
         month_spent = month_result.scalar() or 0
 
@@ -208,7 +213,7 @@ async def get_zen_summary(user: dict = Depends(require_auth)):
         run_count_result = await session.execute(
             select(func.count(func.distinct(ZenUsage.run_id)))
             .where(ZenUsage.user_id == user_id)
-            .where(func.to_char(ZenUsage.created_at, "YYYY-MM") == year_month)
+            .where(ZenUsage.year_month == year_month)
         )
         month_runs = run_count_result.scalar() or 0
 
@@ -249,4 +254,6 @@ async def delete_account(user: dict = Depends(require_auth)):
         if user_row:
             await session.delete(user_row)
 
-    return {"status": "deleted"}
+    response = JSONResponse({"status": "deleted"})
+    response.delete_cookie("token", path="/")
+    return response

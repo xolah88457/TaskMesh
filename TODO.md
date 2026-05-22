@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-21 (Full Codebase Audit session). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-21 (Phase C — Acceptance, Reviewer, Docs Search). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -27,6 +27,24 @@
 - ✅ **file_upload mime_map hoisted** — was rebuilt per file
 - ✅ **Test fixes** — `asyncio.get_event_loop()` → `asyncio.run()`; removed stale `reviewer in config` assertion
 - ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 25 passed / 3 integration skipped
+
+### Remaining Medium Improvements (2026-05-21)
+- ✅ **Per-user agent config** — `users.config_json` replaces shared `agent-team.config.json` for Pro users. Disk file is now a global default only.
+- ✅ **Retry on Zen failures** — `_run_with_retry()` in base_agent.py: 3 attempts, exponential backoff 2/4/8s + jitter, handles 429/5xx/timeout
+- ✅ **Logo optimized** — 3.2 MB PNG → 300-byte SVG
+- ✅ **Postgres to_char() replaced** — `ZenUsage.year_month` column precomputed; queries use portable equality
+- ✅ **tasks_init emits only on change** — dirty flag on SharedTaskList; frontend no longer re-renders on every 2s tick
+- ✅ **git polling optimized** — removed redundant git_status from monitor loop; file polling reduced to 5s
+- ✅ ruff clean, TypeScript build clean, pytest 25 passed
+
+### Low-Priority & UX Improvements (2026-05-21)
+- ✅ **SettingsPanel Account tab deduplicated** — removed `AccountSettingsPanel` + `OAuthRow`; Account tab navigates to /account
+- ✅ **Dead ThinkingSlider purged** — removed `THINKING_MODELS`, `budgetToLevel`, `levelToBudget`, `ThinkingSlider`; documented re-activation path for OpenRouter
+- ✅ **AUTH_DISABLED=false default** — `.env.example` flipped with warning; `auth.py` emits `RuntimeWarning`
+- ✅ **Stray UUID files deleted** from repo root
+- ✅ **CORS hardening** — `RuntimeWarning` when `CORS_ALLOWED_ORIGINS` defaults to `*` outside dev mode
+- ✅ **OAuth state validated** — Google + GitHub callbacks verify anti-CSRF state via HttpOnly cookie
+- ✅ **MatrixRain battery** — pauses requestAnimationFrame on visibilitychange (tab hidden)
 
 ### Dashboard UX & Agent Layout (2026-05-20)
 - ✅ **Default agent layout is empty (manager only) on fresh install / first login**
@@ -67,17 +85,16 @@
   - Replaces (not merges) existing agent config
 
 ### Model List Overhaul (2026-05-20)
-- ✅ **All models replaced with curated 13-model set across 3 tiers**
-  - Flagship (6): DeepSeek V4 Pro, GLM-5.1, Kimi K2.6, MiMo V2.5 Pro, MiniMax M2.7, Qwen3.6 Plus
-  - Balanced (6): DeepSeek V4 Flash, GLM-5, Kimi K2.5, MiMo V2.5, MiniMax M2.5, Qwen3.5 Plus
-  - Fast (1): Nemotron 3 Super
+- ✅ **All models replaced with curated 46-model set across 3 tiers**
+  - Flagship Pro (16): 6 original Flagship + Claude Opus/Sonnet + GPT-5.4/5.5/5.4-pro/5.5-pro + Gemini 3.1 Pro + others
+  - Balanced (22): 6 original Balanced + DeepSeek V4 Flash + Claude Haiku + GPT-5/5.1/5.2 + GPT Codex + Gemini Flash + others
+  - Budget (8): nemotron-3-super + deepseek-v4-flash-free + big-pickle + mini variants + grok
 - ✅ **Old models completely removed** — all Llama, Mistral, GPT OSS, Phi, Jamba, Granite, Codestral, CodeLlama, Gemma, Seed, StarCoder, and old NVIDIA/Router IDs purged
-- ✅ **Fourth category "Code" removed**; "Fast / Small" renamed to "Fast"
-- ✅ **MODEL_GROUPS** in SettingsPanel.tsx — 4 groups → 3 groups with only the 13 new models
-- ✅ **MODEL_RECOMMENDATIONS** in SettingsPanel.tsx — sampling defaults (temperature, top_p, top_k) set for all 46 models
-- ✅ **MODEL_PRICING** in billing.py — per-token rates for all 46 models, old OpenRouter rates removed
-- ✅ **PRO_ONLY_MODELS** in billing.py — all 6 Flagship models are Pro-only; Balanced + Fast available to Starter
-- ✅ **OpenRouter comments cleaned** in base_agent.py and config_loader.py — old model ID maps removed
+- ✅ **MODEL_GROUPS** in SettingsPanel.tsx — 3 groups: Flagship (Pro), Balanced, Budget
+- ✅ **MODEL_RECOMMENDATIONS** in SettingsPanel.tsx — sampling defaults for all 46 models
+- ✅ **MODEL_PRICING** in billing.py — per-token rates for all 46 models
+- ✅ **PRO_ONLY_MODELS** in billing.py — 26 models (threshold: prompt >0.2¢/1K)
+- ✅ **GPT_MODEL_IDS** (17) + **ANTHROPIC_MODEL_IDS** (12) in base_agent.py for model routing
 - ✅ Existing agent-team.config.json models already matched new IDs — no migration needed
 - ✅ TypeScript build passes clean (0 errors)
 
@@ -85,7 +102,7 @@
 - ✅ Provider switched NVIDIA NIM → OpenCode Zen (2026-05-20)
   - base_url: `https://opencode.ai/zen/v1`, env var: `OPENCODE_GO_API_KEY`
   - All 9 agent model IDs updated to OpenCode Zen short IDs
-  - MiniMax models excluded (use Anthropic message format, incompatible with AsyncOpenAI)
+  - MiniMax models supported via Anthropic Messages API (ANTHROPIC_MODEL_IDS in base_agent.py)
   - OpenRouter migration path preserved in comment blocks in base_agent.py + config_loader.py
 - ✅ FastAPI + Socket.IO backend running
 - ✅ React + Vite frontend running, proxies to backend
@@ -134,17 +151,17 @@
 - ✅ Dev bypass: AUTH_DISABLED skips all gates in routes.py and billing.py
 
 ### Multi-Agent Pipeline
-- ✅ 5-phase orchestration: select → plan → manage → execute → review
+- ✅ 2-phase dynamic coordination: Manager creates tasks → Agents self-coordinate via SharedTaskList
+- ✅ SharedTaskList — in-memory task queue with claim/start/complete workflow + crash persistence
 - ✅ FileLockRegistry — exclusive file ownership per agent
 - ✅ AgentMailbox — async cross-agent messaging
 - ✅ CoordinatorLog — structured run log
-- ✅ Reviewer quality gate — Phase 4 approval before Phase 5
-- ✅ Auto-commit after each atomic task
-- ✅ Selector agent — picks agents from roster based on brief
-- ✅ Planner agent — breaks brief into atomic tasks
-- ✅ Manager agent — assigns tasks with file exclusivity
-- ✅ Executor agents — parallel workers with file lock awareness
-- ✅ Reviewer agent — audits all changes, returns pass/fail
+- ✅ Agent loop — each agent claims tasks, executes, writes files, auto-commits, loops
+- ✅ File parsing — `--- FILE: path ---` format with regex parsing and path traversal protection
+- ✅ Auto-commit after each task
+- ✅ Selector agent removed — manager creates task plan directly for all available agents
+- ✅ Planner phase removed — all agents self-coordinate without phased planning
+- ✅ Reviewer agent excluded from executor loop (no Phase 4 in current pipeline)
 
 ### Projects Dashboard
 - ✅ Run history list (all past runs for authenticated user)
@@ -159,6 +176,16 @@
 - ✅ Admin bypass redirect fixed — entering valid key now redirects to dashboard after granting access
 - ✅ BalanceBar component: large `{pct}%` display with colored fill bar (green → amber < 25% → red < 10%)
 - ✅ TypeScript build passes clean (0 errors)
+
+### Phase C — Acceptance criteria, reviewer, docs search (2026-05-21)
+- ✅ **Acceptance criteria per task** — `task_acceptance` table (id, task_id, run_id, criterion, met, checked_by, checked_at). Manager prompt extended with `"acceptance": [...]` field per task.
+- ✅ **Reviewer reactivation (Phase 4)** — Reviewer agent runs after all executors finish. Gets full task list, acceptance criteria, files written. Emits `reviewer_started`/`reviewer_result` Socket.IO events. Flips `task_acceptance.met` per criterion.
+- ✅ **Docs search tool for agents** — New `backend/core/docs_search.py` module. Agents issue `<search>query</search>` blocks; orchestrator runs grep-based search over upload_dir + PROJECT_DIR. Capped at 3 search rounds per task. Logged to `ActionTool` table as `docs.search`.
+- ✅ **Crash-recovery snapshots** — `.taskmesh/current.md` regenerated on every coordinator event and task state change. Records run_id, brief, phase, task statuses with acceptance progress. `.taskmesh/` added to `.gitignore`.
+- ✅ **Run resumable detection** — On orchestrator startup, checks DB for stale `running`-status runs. Emits `run_resumable` Socket.IO event if one is found (no auto-resume).
+- ✅ **UI: acceptance criteria in TasksList** — Per-task badge showing `2/3 criteria` with accent color when all met.
+- ✅ **UI: acceptance criteria in ReviewerPanel** — New "Acceptance Criteria" section above the issues list with ✓/✗ per criterion + reviewer note.
+- ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 36 passed / 3 integration skipped
 
 ---
 
@@ -252,10 +279,6 @@ These are improvements to build next when external services are wired up.
   main app header when balance < $1.00 to prompt top-up before credits run out mid-run.
 
 ### Medium Priority
-- ⬜ **Retry logic in `base_agent.py` for OpenCode Zen 429 rate limits**
-  Currently no retry — a 429 propagates as empty content and silently corrupts the run.
-  Add exponential backoff (3 retries, 2s/4s/8s) before giving up.
-
 - ⬜ **Run-level credit estimate before starting**
   Before calling `asyncio.create_task(orchestrator.run(...))`, calculate an estimate of
   worst-case cost (e.g., 9 agents × avg token use × model rate) and warn user if it would

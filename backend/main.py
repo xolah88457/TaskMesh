@@ -1,4 +1,5 @@
 import os
+import re
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -11,9 +12,9 @@ import socketio  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from .auth.auth import decode_token  # noqa: E402
-from .core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER  # noqa: E402
-from .api.routes import router, get_default_config, get_orchestrators, _init_sio  # noqa: E402
+from .auth.auth import decode_token, AUTH_DISABLED  # noqa: E402
+from .api.routes import router, get_default_config, get_orchestrators, _init_sio, start_upload_cleanup  # noqa: E402
+from .api.routes import _cleanup_expired_tokens as _cleanup_upload_tokens  # noqa: E402
 from .api.billing import router as billing_router  # noqa: E402
 from .api.github import router as github_router  # noqa: E402
 from .api.auth import router as auth_router  # noqa: E402
@@ -31,11 +32,24 @@ _CORS_ORIGINS: list[str] | str = (
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=_CORS_ORIGINS)
 _init_sio(sio)
 
+# Warn if CORS is wide open outside dev mode — production risk.
+if _cors_env == "*" and not AUTH_DISABLED:
+    import warnings
+    warnings.warn(
+        "CORS_ALLOWED_ORIGINS is unset (defaulting to '*'). In production this "
+        "allows any origin to call your API. Set CORS_ALLOWED_ORIGINS to your "
+        "frontend URL(s).",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_tables()
+    start_upload_cleanup()          # background task: clean expired uploads every 5 min
     yield
+    await _cleanup_upload_tokens()  # final sweep before shutdown
     # Cancel any active orchestrators on shutdown
     for user_id, orch in list(get_orchestrators().items()):
         orch.cancel()
@@ -62,29 +76,25 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 @sio.event
 async def connect(sid, environ):
     print(f"Client connected: {sid}")
+
+    # Authenticate from HttpOnly cookie (XSS-safe). No separate 'auth' event needed.
+    if not AUTH_DISABLED:
+        cookie_str = environ.get("HTTP_COOKIE", "")
+        match = re.search(r'(?:^|;\s*)token=([^;]+)', cookie_str)
+        if match:
+            try:
+                payload = decode_token(match.group(1))
+                user_id = payload.get("sub", "")
+                if user_id:
+                    sio.enter_room(sid, f"user:{user_id}")
+            except Exception:
+                pass  # unauthenticated socket — still receives public init event
+
     await sio.emit("init", {
         "project": _default_config.project,
         "sprint":  _default_config.sprint,
         "agents":  _default_config.agents,
     }, to=sid)
-
-
-@sio.event
-async def auth(sid, data):
-    """Authenticate a socket connection via JWT and enter the user's room."""
-    token = data.get("token", "") if isinstance(data, dict) else ""
-    if not token:
-        return {"ok": False, "error": "missing token"}
-    try:
-        payload = decode_token(token)
-        user_id = payload.get("sub", "")
-        if not user_id:
-            return {"ok": False, "error": "invalid token payload"}
-        room = f"user:{user_id}"
-        sio.enter_room(sid, room)
-        return {"ok": True, "room": room}
-    except Exception:
-        return {"ok": False, "error": "invalid token"}
 
 
 @sio.event

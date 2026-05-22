@@ -59,32 +59,61 @@ def get_project_dir() -> Path:
     return Path(env).resolve() if env else Path(os.getcwd())
 
 
-def load_config() -> ProjectConfig:
+def load_config(user_id: str = "") -> ProjectConfig:
+    """Load agent config for a user. Falls back to disk file if no per-user config."""
     cwd = get_project_dir()
     project_name = cwd.name
-    config_path = cwd / "agent-team.config.json"
 
     sprint = "Sprint #1"
     agents = [a.copy() for a in DEFAULT_AGENTS]
     provider = ProviderConfig()
 
-    if config_path.exists():
+    # Try per-user config from DB first
+    if user_id:
         try:
-            data = json.loads(config_path.read_text())
-            sprint = data.get("sprint", sprint)
-
-            if isinstance(data.get("agents"), list) and data["agents"]:
-                agents = data["agents"]
-
-            if isinstance(data.get("provider"), dict):
-                p = data["provider"]
-                provider = ProviderConfig(
-                    name=p.get("name", provider.name),
-                    baseURL=p.get("baseURL", provider.baseURL),
-                    apiKey=p.get("apiKey", provider.apiKey),
-                )
-        except (json.JSONDecodeError, OSError):
+            from ..db.session import get_session
+            from ..db.models import User
+            import asyncio as _asyncio
+            async def _load():
+                async with get_session() as session:
+                    if session is not None:
+                        user_row = await session.get(User, user_id)
+                        if user_row and user_row.config_json:
+                            return json.loads(user_row.config_json)
+                    return None
+            data = _asyncio.get_event_loop().run_until_complete(_load())
+            if data:
+                sprint = data.get("sprint", sprint)
+                if isinstance(data.get("agents"), list) and data["agents"]:
+                    agents = data["agents"]
+                if isinstance(data.get("provider"), dict):
+                    p = data["provider"]
+                    provider = ProviderConfig(
+                        name=p.get("name", provider.name),
+                        baseURL=p.get("baseURL", provider.baseURL),
+                        apiKey=p.get("apiKey", provider.apiKey),
+                    )
+        except Exception:
             pass
+
+    # Fall back to disk file if no per-user config loaded
+    if agents == [a.copy() for a in DEFAULT_AGENTS]:
+        config_path = cwd / "agent-team.config.json"
+        if config_path.exists():
+            try:
+                data = json.loads(config_path.read_text())
+                sprint = data.get("sprint", sprint)
+                if isinstance(data.get("agents"), list) and data["agents"]:
+                    agents = data["agents"]
+                if isinstance(data.get("provider"), dict):
+                    p = data["provider"]
+                    provider = ProviderConfig(
+                        name=p.get("name", provider.name),
+                        baseURL=p.get("baseURL", provider.baseURL),
+                        apiKey=p.get("apiKey", provider.apiKey),
+                    )
+            except (json.JSONDecodeError, OSError):
+                pass
 
     # Fall back to env var for API key if not in config
     if not provider.apiKey:
@@ -100,6 +129,17 @@ def load_config() -> ProjectConfig:
     return ProjectConfig(project=project_name, sprint=sprint, agents=agents, provider=provider)
 
 
-def save_config(data: dict) -> None:
+async def save_config(data: dict, user_id: str = "") -> None:
+    """Save agent config — per-user in DB if user_id provided, else disk file."""
+    if user_id:
+        from ..db.session import get_session
+        from ..db.models import User
+        async with get_session() as session:
+            if session is not None:
+                user_row = await session.get(User, user_id)
+                if user_row is not None:
+                    user_row.config_json = json.dumps(data, ensure_ascii=False)
+                    return
+    # Fallback: write to disk file (global default)
     config_path = Path(os.getcwd()) / "agent-team.config.json"
     config_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))

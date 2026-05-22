@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthContext } from '../context/auth'
 
 /**
- * Landing page for Google OAuth redirect.
- * The backend redirects here as:   /auth/callback#<jwt>
- * We read the JWT from the URL hash, store it, then send the user home.
+ * Landing page for Google/GitHub OAuth redirect.
+ * The backend redirects here as: /auth/callback#<jwt>
+ * The JWT in the hash confirms OAuth succeeded. Auth is handled
+ * server-side via HttpOnly cookie — the frontend only needs to
+ * refresh the user display from /api/auth/me.
  */
 export default function AuthCallback() {
   const { login }  = useAuthContext()
@@ -18,7 +20,7 @@ export default function AuthCallback() {
 
     const token = window.location.hash.slice(1)  // strip leading '#'
     if (token) {
-      login(token)
+      login()
       window.history.replaceState(null, '', '/auth/callback')  // clear hash from URL
       navigate('/', { replace: true })
     } else {

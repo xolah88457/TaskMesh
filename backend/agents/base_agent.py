@@ -1,5 +1,8 @@
+import asyncio
 import os
-from openai import AsyncOpenAI
+import random
+import time
+from openai import APIStatusError, APITimeoutError, APIConnectionError, AsyncOpenAI
 from anthropic import AsyncAnthropic
 
 # ── OpenRouter (inactive — switch when ready) ──────────────────────────────────
@@ -108,8 +111,55 @@ class BaseAgent:
             self._anthropic_client = AsyncAnthropic(api_key=key, base_url=base)
         return self._anthropic_client
 
+    async def _run_with_retry(self, call_fn, max_retries: int = 3) -> dict:
+        """Execute an API call with exponential backoff on transient failures.
+
+        Retries on: APIStatusError (includes 429), APITimeoutError,
+        APIConnectionError. Non-transient errors (e.g. authentication) fail
+        immediately. Returns an empty content dict on total failure — never raises.
+
+        The returned dict always carries telemetry the orchestrator logs to
+        ActionTool:
+          - "_attempts":   number of attempts actually made (1 = first call succeeded)
+          - "_status":     "ok" | "retried" | "failed"
+          - "_error":      last error message if status != "ok", else ""
+          - "_duration_ms": wall-clock duration of the whole call (including backoff)
+        """
+        started = time.monotonic()
+        last_error = ""
+        for attempt in range(max_retries):
+            try:
+                result = await call_fn()
+                result["_attempts"]    = attempt + 1
+                result["_status"]      = "ok" if attempt == 0 else "retried"
+                result["_error"]       = ""
+                result["_duration_ms"] = int((time.monotonic() - started) * 1000)
+                return result
+            except (APIStatusError, APITimeoutError, APIConnectionError) as e:
+                last_error = f"{type(e).__name__}: {e}"
+                if attempt == max_retries - 1:
+                    break
+                delay = (2 ** attempt) + random.uniform(0, 0.5)
+                await asyncio.sleep(delay)
+            except Exception as e:  # noqa: BLE001 — auth/etc. shouldn't retry
+                last_error = f"{type(e).__name__}: {e}"
+                break
+        return {
+            "content":           "",
+            "prompt_tokens":     0,
+            "completion_tokens": 0,
+            "model":             self.model,
+            "_attempts":         attempt + 1,
+            "_status":           "failed",
+            "_error":            last_error,
+            "_duration_ms":      int((time.monotonic() - started) * 1000),
+        }
+
     async def _run_anthropic(self, user_message: str) -> dict:
-        """Call an Anthropic-format model (e.g. MiniMax via OpenCode Go /v1/messages)."""
+        """Call an Anthropic-format model with retry on transient failures."""
+        return await self._run_with_retry(lambda: self._do_anthropic_call(user_message))
+
+    async def _do_anthropic_call(self, user_message: str) -> dict:
         response = await self._get_anthropic_client().messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
@@ -182,23 +232,25 @@ class BaseAgent:
             else:
                 extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
-        extra = {"extra_body": extra_body} if extra_body else {}
+        async def _do_chat_completion():
+            extra = {"extra_body": extra_body} if extra_body else {}
+            response = await self._get_client().chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user",   "content": user_message},
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                **extra,
+            )
+            usage = response.usage
+            return {
+                "content":           response.choices[0].message.content or "",
+                "prompt_tokens":     usage.prompt_tokens     if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "model":             self.model,
+            }
 
-        response = await self._get_client().chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user",   "content": user_message},
-            ],
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            **extra,
-        )
-        usage = response.usage
-        return {
-            "content":           response.choices[0].message.content or "",
-            "prompt_tokens":     usage.prompt_tokens     if usage else 0,
-            "completion_tokens": usage.completion_tokens if usage else 0,
-            "model":             self.model,
-        }
+        return await self._run_with_retry(_do_chat_completion)

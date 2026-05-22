@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { THEMES } from '../themes'
 import { useAuthFetch } from '../hooks/useAuthFetch'
-import { useAuthContext } from '../context/auth'
 
 interface AgentCfg {
   id: string
@@ -20,26 +19,11 @@ interface AgentCfg {
   system_prompt?: string
 }
 
-// Thinking budgets disabled for OpenCode Go — the extra_body format is provider-specific
-// and OpenCode Go does not document supported parameters for it.
-// Will restore with confirmed values when switching to OpenRouter.
-// thinking_budget levels: [low, medium, high, extra-high, max]
-const THINKING_MODELS: Record<string, [number, number, number, number, number]> = {}
-
-const THINK_LABELS = ['Off', 'Low', 'Med', 'High', 'X-Hi', 'Max'] as const
-
-function budgetToLevel(model: string, budget: number): number {
-  const levels = THINKING_MODELS[model]
-  if (!levels || budget === 0) return 0
-  const all = [0, ...levels]
-  return all.reduce((bi, v, i) => Math.abs(v - budget) < Math.abs(all[bi] - budget) ? i : bi, 0)
-}
-
-function levelToBudget(model: string, level: number): number {
-  if (level === 0) return 0
-  const levels = THINKING_MODELS[model]
-  return levels ? levels[level - 1] : 0
-}
+// Thinking budgets are not currently supported by OpenCode Zen.
+// THINKING_MODEL_IDS in base_agent.py is an empty set. When switching to
+// OpenRouter (which exposes thinking budgets), populate that set and
+// re-add the ThinkingSlider component to this file.
+// See: base_agent.py — THINKING_MODEL_IDS and ThinkingSlider below.
 
 interface AgentPreset {
   id: string
@@ -586,46 +570,6 @@ function Slider({ label, value, min, max, step, onChange }: {
   )
 }
 
-function ThinkingSlider({ model, budget, onChange }: {
-  model: string
-  budget: number
-  onChange: (budget: number) => void
-}) {
-  const levels = THINKING_MODELS[model]
-  if (!levels) return null
-
-  const level = budgetToLevel(model, budget)
-  const allBudgets: number[] = [0, ...levels]
-
-  return (
-    <div className="pt-1 space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-mono uppercase tracking-widest" style={{ color: 'var(--c-text-3)' }}>
-          Thinking
-        </span>
-        <span className="text-[9px] font-mono tabular-nums"
-          style={{ color: level > 0 ? 'var(--c-accent)' : 'var(--c-text-4)' }}>
-          {level > 0 ? `${allBudgets[level].toLocaleString()} tokens · max ${levels[4].toLocaleString()}` : 'disabled'}
-        </span>
-      </div>
-      <input
-        type="range" min={0} max={5} step={1} value={level}
-        onChange={e => onChange(levelToBudget(model, parseInt(e.target.value)))}
-        className="w-full h-1 cursor-pointer"
-        style={{ accentColor: level > 0 ? 'var(--c-accent)' : 'var(--c-text-3)' }}
-      />
-      <div className="flex justify-between px-0.5">
-        {THINK_LABELS.map((label, i) => (
-          <span key={i} className="text-[8px] font-mono leading-none"
-            style={{ color: i === level ? 'var(--c-accent)' : 'var(--c-text-4)' }}>
-            {label}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 interface Props {
   open: boolean
   onClose: () => void
@@ -644,7 +588,6 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
   const [recMsg, setRecMsg] = useState('')
   const [activeTab, setActiveTab] = useState<'project' | 'account'>(initialTab)
   const authFetch = useAuthFetch()
-  const { user, logout } = useAuthContext()
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -925,8 +868,17 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
             </Section>
               </>
             ) : (
-              <motion.div key="account">
-              <AccountSettingsPanel user={user} authFetch={authFetch} />
+              <motion.div key="account" className="pt-4">
+                <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-3)' }}>
+                  Account settings are available at the dedicated account page.
+                </p>
+                <button
+                  onClick={() => { navigate('/account'); onClose() }}
+                  className="w-full text-xs py-2 rounded font-bold transition-colors"
+                  style={{ background: 'var(--c-accent)', color: '#000' }}
+                >
+                  Open Account Settings →
+                </button>
               </motion.div>
             )}
             </AnimatePresence>
@@ -953,15 +905,6 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
                 }
               >
                 {saved ? '✓ Saved' : saving ? 'Saving…' : 'Save & Apply'}
-              </button>
-            )}
-            {activeTab === 'account' && (
-              <button
-                onClick={() => { logout(); navigate('/login') }}
-                className="text-xs font-mono px-4 py-1.5 rounded"
-                style={{ border: '1px solid rgba(239,68,68,0.3)', color: 'rgba(239,68,68,0.7)' }}
-              >
-                Sign out
               </button>
             )}
           </div>
@@ -1258,15 +1201,6 @@ function AgentEditor({ agent, isManager, onUpdate, onApplyPreset, onRemove }: Ag
                 )}
               </div>
 
-              {/* Thinking budget (only for thinking-capable models) */}
-              {THINKING_MODELS[agent.model] && (
-                <ThinkingSlider
-                  model={agent.model}
-                  budget={agent.thinking_budget ?? 0}
-                  onChange={v => onUpdate('thinking_budget', v)}
-                />
-              )}
-
               {/* Remove */}
               <div className="flex justify-end pt-1">
                 <button
@@ -1285,236 +1219,3 @@ function AgentEditor({ agent, isManager, onUpdate, onApplyPreset, onRemove }: Ag
   )
 }
 
-// ── Account settings sub-panel ────────────────────────────────────────────────
-
-interface AccountSettingsPanelProps {
-  user: { id: string; email: string; name: string } | null
-  logout: () => void
-  navigate: (path: string) => void
-  authFetch: (url: string, opts?: RequestInit) => Promise<Response>
-}
-
-function AccountSettingsPanel({ user, authFetch }: Omit<AccountSettingsPanelProps, 'logout' | 'navigate'>) {
-  const [email, setEmail]     = useState(user?.email ?? '')
-  const [currPw, setCurrPw]   = useState('')
-  const [newPw, setNewPw]    = useState('')
-  const [confirmPw, setConfirmPw] = useState('')
-  const [pwError, setPwError] = useState('')
-  const [saveStatus, setSaveStatus] = useState('')
-  const [saving, setSaving]   = useState(false)
-  const [usage, setUsage]     = useState<{ plan: string; run_count: number; run_limit: number | null } | null>(null)
-  const [loadingUsage, setLoadingUsage] = useState(true)
-
-  useEffect(() => {
-    if (user?.email) setEmail(user.email)
-    authFetch('/api/billing/usage')
-      .then(r => r.json())
-      .then(d => setUsage(d))
-      .catch(() => {})
-      .finally(() => setLoadingUsage(false))
-  }, [authFetch, user])
-
-  const handleSaveEmail = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setPwError('')
-    setSaving(true)
-    try {
-      const r = await authFetch('/api/account/email', {
-        method:  'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, password: currPw }),
-      })
-      const d = await r.json()
-      if (!r.ok) { setPwError(d.detail ?? 'Update failed'); return }
-      setSaveStatus('email')
-      setCurrPw('')
-      setTimeout(() => setSaveStatus(''), 2000)
-    } catch {
-      setPwError('Network error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleSavePassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setPwError('')
-    if (newPw !== confirmPw) { setPwError('Passwords do not match'); return }
-    if (newPw.length < 8)    { setPwError('Must be at least 8 characters'); return }
-    setSaving(true)
-    try {
-      const r = await authFetch('/api/account/password', {
-        method:  'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ current_password: currPw, new_password: newPw }),
-      })
-      const d = await r.json()
-      if (!r.ok) { setPwError(d.detail ?? 'Update failed'); return }
-      setSaveStatus('password')
-      setCurrPw(''); setNewPw(''); setConfirmPw('')
-      setTimeout(() => setSaveStatus(''), 2000)
-    } catch {
-      setPwError('Network error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Identity */}
-      <Section title="Identity">
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>Signed in as</span>
-          <span className="text-[11px]" style={{ color: 'var(--c-text-1)' }}>{user?.name || user?.email || '—'}</span>
-        </div>
-      </Section>
-
-      {/* Change email */}
-      <Section title="Change Email">
-        <form onSubmit={handleSaveEmail} className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>New email</span>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              className="flex-1 text-[11px] font-mono rounded px-2 py-1 focus:outline-none"
-              style={{ background: 'var(--c-input-bg)', border: '1px solid var(--c-border)', color: 'var(--c-text-1)' }} />
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>Current pw</span>
-            <input type="password" value={currPw} onChange={e => setCurrPw(e.target.value)}
-              placeholder="Required"
-              className="flex-1 text-[11px] font-mono rounded px-2 py-1 focus:outline-none"
-              style={{ background: 'var(--c-input-bg)', border: '1px solid var(--c-border)', color: 'var(--c-text-1)' }} />
-          </div>
-          <button type="submit" disabled={saving}
-            className="text-[10px] font-mono px-3 py-1 rounded font-bold disabled:opacity-40"
-            style={{ background: 'var(--c-accent)', color: '#000' }}>
-            {saveStatus === 'email' ? '✓ Saved' : saving ? 'Saving…' : 'Update Email'}
-          </button>
-        </form>
-      </Section>
-
-      {/* Change password */}
-      <Section title="Change Password">
-        <form onSubmit={handleSavePassword} className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>Current pw</span>
-            <input type="password" value={currPw} onChange={e => setCurrPw(e.target.value)}
-              className="flex-1 text-[11px] font-mono rounded px-2 py-1 focus:outline-none"
-              style={{ background: 'var(--c-input-bg)', border: '1px solid var(--c-border)', color: 'var(--c-text-1)' }} />
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>New password</span>
-            <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
-              placeholder="At least 8 characters"
-              className="flex-1 text-[11px] font-mono rounded px-2 py-1 focus:outline-none"
-              style={{ background: 'var(--c-input-bg)', border: '1px solid var(--c-border)', color: 'var(--c-text-1)' }} />
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>Confirm</span>
-            <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-              placeholder="Repeat"
-              className="flex-1 text-[11px] font-mono rounded px-2 py-1 focus:outline-none"
-              style={{ background: 'var(--c-input-bg)', border: '1px solid var(--c-border)', color: 'var(--c-text-1)' }} />
-          </div>
-          {pwError && <p className="text-[10px]" style={{ color: '#ef4444' }}>{pwError}</p>}
-          <button type="submit" disabled={saving}
-            className="text-[10px] font-mono px-3 py-1 rounded font-bold disabled:opacity-40"
-            style={{ background: 'var(--c-accent)', color: '#000' }}>
-            {saveStatus === 'password' ? '✓ Saved' : saving ? 'Saving…' : 'Update Password'}
-          </button>
-        </form>
-      </Section>
-
-      {/* Billing */}
-      <Section title="Billing">
-        {loadingUsage ? (
-          <p className="text-[10px]" style={{ color: 'var(--c-text-4)' }}>Loading…</p>
-        ) : usage ? (
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>Plan</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded"
-                style={{ background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }}>
-                {usage.plan.toUpperCase()}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] font-mono w-24 shrink-0" style={{ color: 'var(--c-text-3)' }}>Runs this month</span>
-              <span className="text-[10px]" style={{ color: 'var(--c-text-2)' }}>
-                {usage.run_count}{usage.run_limit !== null ? ` / ${usage.run_limit}` : ' (unlimited)'}
-              </span>
-            </div>
-            {(usage.plan === 'pro' || usage.plan === 'team') && (
-              <button
-                onClick={() => alert('Paddle customer portal not wired yet.')}
-                className="text-[10px] font-mono px-3 py-1 rounded mt-1"
-                style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)' }}
-              >
-                Open billing portal ↗
-              </button>
-            )}
-          </div>
-        ) : null}
-      </Section>
-
-      {/* Connected accounts */}
-      <Section title="Connected Accounts">
-        <p className="text-[10px] mb-3" style={{ color: 'var(--c-text-3)' }}>
-          Link OAuth accounts to sign in without a password.
-        </p>
-        <div className="space-y-2">
-          <OAuthRow provider="google" connected={false} />
-          <OAuthRow provider="github" connected={false} />
-        </div>
-      </Section>
-
-      {/* Danger zone */}
-      <Section title="Danger Zone">
-        <p className="text-[10px] mb-3" style={{ color: 'var(--c-text-3)' }}>
-          These actions are permanent and cannot be undone.
-        </p>
-        <div className="space-y-2">
-          {(usage?.plan === 'pro' || usage?.plan === 'team') && (
-            <button
-              onClick={() => alert('Cancel subscription not wired yet.')}
-              className="w-full text-left text-[10px] font-mono px-3 py-2 rounded"
-              style={{ border: '1px solid rgba(245,158,11,0.4)', color: '#f59e0b', background: 'rgba(245,158,11,0.05)' }}
-            >
-              Cancel subscription
-            </button>
-          )}
-          <button
-            onClick={() => { if (confirm('Delete your account and all run history?')) alert('Delete not wired yet.') }}
-            className="w-full text-left text-[10px] font-mono px-3 py-2 rounded"
-            style={{ border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}
-          >
-            Delete account
-          </button>
-        </div>
-      </Section>
-    </div>
-  )
-}
-
-function OAuthRow({ provider, connected }: { provider: 'google' | 'github'; connected: boolean }) {
-  const labels = { google: 'Google', github: 'GitHub' }
-  const colors = { google: '#4285F4', github: '#6e5494' }
-  return (
-    <div className="flex items-center justify-between px-3 py-2 rounded"
-      style={{ border: '1px solid var(--c-border)', background: 'var(--c-surface-3)' }}>
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] font-semibold" style={{ color: colors[provider] }}>{labels[provider]}</span>
-        <span className="text-[9px]" style={{ color: connected ? '#22c55e' : 'var(--c-text-4)' }}>
-          {connected ? 'Connected' : 'Not connected'}
-        </span>
-      </div>
-      <button
-        onClick={() => alert('OAuth not wired yet.')}
-        className="text-[10px] font-mono px-2 py-0.5 rounded"
-        style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-3)' }}>
-        {connected ? 'Disconnect' : 'Connect'}
-      </button>
-    </div>
-  )
-}

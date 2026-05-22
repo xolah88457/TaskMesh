@@ -2,9 +2,8 @@ import { useEffect, useReducer, useRef } from 'react'
 import { io, Socket } from 'socket.io-client'
 import type {
   ProjectState, Agent, Task, LogEntry, NetMessage,
-  ReviewerResult, CoordLogEntry, MailboxMessage,
+  ReviewerResult, CoordLogEntry, MailboxMessage, AcceptanceCriterion,
 } from '../types'
-import { useAuthContext } from '../context/auth'
 import { useAuthFetch } from './useAuthFetch'
 
 const INITIAL: ProjectState = {
@@ -48,6 +47,8 @@ type Action =
   // coordination actions
   | { type: 'REVIEWER_STARTED' }
   | { type: 'REVIEWER_RESULT'; result: ReviewerResult }
+  | { type: 'REVIEWER_RETRY'; taskIds: string[] }
+  | { type: 'RUN_RESUMABLE'; runId: string; brief: string; startedAt: string }
   | { type: 'COORD_LOG'; entry: CoordLogEntry }
   | { type: 'FILE_LOCKED'; path: string; agentId: string }
   | { type: 'FILE_UNLOCKED'; path: string }
@@ -93,13 +94,26 @@ function reducer(state: ProjectState, action: Action): ProjectState {
       return { ...state, feature: action.feature }
 
     case 'TASKS_INIT': {
-      const tasks: Task[] = action.tasks.map(t => ({
-        id: t.id,
-        title: t.title ?? '',
-        tag: t.tag ?? '',
-        assignee: t.tag ?? '',
-        done: false,
-      }))
+      const tasks: Task[] = action.tasks.map(t => {
+        const rawAcc: unknown[] = Array.isArray(t.acceptance) ? t.acceptance : []
+        const acceptance: AcceptanceCriterion[] = rawAcc.map((c: unknown) => {
+          const item = c as Record<string, unknown>
+          return {
+            id: String(item.id ?? ''),
+            criterion: String(item.criterion ?? ''),
+            met: Boolean(item.met),
+            note: typeof item.checked_by === 'string' ? `by ${item.checked_by}` : undefined,
+          }
+        })
+        return {
+          id: t.id,
+          title: t.title ?? '',
+          tag: t.tag ?? '',
+          assignee: t.tag ?? '',
+          done: false,
+          acceptance: acceptance.length > 0 ? acceptance : undefined,
+        }
+      })
       return { ...state, tasks }
     }
 
@@ -159,6 +173,20 @@ function reducer(state: ProjectState, action: Action): ProjectState {
     case 'REVIEWER_RESULT':
       return { ...state, reviewerActive: false, reviewerResult: action.result }
 
+    case 'REVIEWER_RETRY':
+      // Future: trigger retry of failed tasks. No-op for now.
+      return state
+
+    case 'RUN_RESUMABLE':
+      // Future: surface a "Resume?" prompt. Logged to terminal for now.
+      return {
+        ...state,
+        terminalLines: [
+          ...state.terminalLines,
+          `[resumable] Run ${action.runId.slice(0, 8)}… interrupted at ${action.startedAt.slice(11, 19)} — "${action.brief.slice(0, 60)}"`,
+        ].slice(-30),
+      }
+
     case 'COORD_LOG':
       return { ...state, coordLog: [...state.coordLog, action.entry].slice(-100) }
 
@@ -184,20 +212,11 @@ export function useSocket() {
   const [state, dispatch] = useReducer(reducer, INITIAL)
   const socketRef = useRef<Socket | null>(null)
   const authFetch = useAuthFetch()
-  const { getToken } = useAuthContext()
 
   useEffect(() => {
     const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || undefined
     const socket = io(SOCKET_URL, { path: '/socket.io', transports: ['websocket', 'polling'] })
     socketRef.current = socket
-
-    // Authenticate the socket so the backend joins this connection to the user's room.
-    // Room-scoping ensures each user only receives events from their own runs.
-    getToken().then(token => {
-      if (token && token !== 'dev-token') {
-        socket.emit('auth', { token })
-      }
-    }).catch(() => {})
 
     socket.on('init', ({ project, sprint, agents }: { project: string; sprint: string; agents: Agent[] }) =>
       dispatch({ type: 'INIT', project, sprint, agents }))
@@ -232,10 +251,18 @@ export function useSocket() {
     socket.on('run_done', () => dispatch({ type: 'DONE' }))
 
     // ── coordination events ───────────────────────────────────────────────────
-    // NOTE: reviewer_started / reviewer_result / reviewer_retry are reserved for a
-    // future Phase 4 reviewer gate. The orchestrator does not emit them yet; the
-    // reviewer agent runs as a regular executor today. Re-add the listeners here
-    // when the orchestrator gains a dedicated reviewer phase.
+
+    socket.on('reviewer_started', () =>
+      dispatch({ type: 'REVIEWER_STARTED' }))
+
+    socket.on('reviewer_result', ({ result }: { result: ReviewerResult }) =>
+      dispatch({ type: 'REVIEWER_RESULT', result }))
+
+    socket.on('reviewer_retry', ({ taskIds }: { taskIds: string[] }) =>
+      dispatch({ type: 'REVIEWER_RETRY', taskIds }))
+
+    socket.on('run_resumable', ({ runId, brief, startedAt }: { runId: string; brief: string; startedAt: string }) =>
+      dispatch({ type: 'RUN_RESUMABLE', runId, brief, startedAt }))
 
     socket.on('coordinator_log', ({ entry }: { entry: CoordLogEntry }) =>
       dispatch({ type: 'COORD_LOG', entry }))

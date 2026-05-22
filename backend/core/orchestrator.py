@@ -32,7 +32,7 @@ from ..agents.manager_agent import ManagerAgent
 from ..core.config_loader import ProjectConfig, get_project_dir, load_config
 from ..core.task_list import SharedTaskList
 from ..db.session import get_session
-from ..db.models import Run, RunFile, UserUsage
+from ..db.models import Run, RunFile, UserUsage, ActionFile, ActionTool
 
 # ─── file-block regex for agent output parsing ───────────────────────────────
 _FILE_RE = re.compile(
@@ -206,7 +206,7 @@ class Orchestrator:
         self._file_locks   = FileLockRegistry()
         self._mailbox      = AgentMailbox()
         self._coord_log    = CoordinatorLog()
-        self._task_list    = SharedTaskList()
+        self._task_list: SharedTaskList | None = None
 
         # per-run execution tracking
         self._agent_written_files: dict[str, list[str]] = {}  # agent_id -> [paths]
@@ -291,6 +291,232 @@ class Orchestrator:
     async def _clog(self, decision_type: str, content: str, metadata: dict | None = None) -> None:
         entry = self._coord_log.record(decision_type, content, metadata)
         await self._emit_coordinator_log(entry)
+        # Persist to DB if available
+        asyncio.create_task(self._persist_coordinator_event(decision_type, content, metadata))
+        # Regenerate crash-recovery snapshot
+        asyncio.create_task(self._write_current_md_snapshot())
+
+    async def _persist_coordinator_event(self, event_type: str, content: str,
+                                          metadata: dict | None = None) -> None:
+        """Persist a coordinator event to DB. Fire-and-forget, never raises."""
+        run_id = getattr(self, "_run_id", "")
+        if not run_id:
+            return
+        try:
+            from ..db.models import CoordinatorEvent
+            import json
+            async with get_session() as session:
+                if session is not None:
+                    session.add(CoordinatorEvent(
+                        run_id=run_id,
+                        event_type=event_type,
+                        agent_id=None,
+                        content=content,
+                        metadata_json=json.dumps(metadata) if metadata else None,
+                    ))
+        except Exception:
+            pass
+
+    async def _write_current_md_snapshot(self) -> None:
+        """Write .taskmesh/current.md crash-recovery snapshot. Fire-and-forget."""
+        try:
+            if self._task_list is None:
+                return
+            tasks = await self._task_list.all_tasks()
+            brief = getattr(self, "_current_brief", "")
+            phase = self._get_current_phase()
+            total_files = sum(
+                len(paths) for paths in self._agent_written_files.values()
+            )
+            coord_count = len(self._coord_log.all())
+
+            lines = [
+                f"# TaskMesh run {self._run_id}",
+                f"Brief: {brief}",
+                f"Started: {datetime.now(timezone.utc).isoformat()}",
+                f"Phase: {phase}",
+                "Tasks:",
+            ]
+            for t in tasks:
+                icon = {"available": "⬜", "claimed": "⏳", "in_progress": "🔄",
+                        "completed": "✓", "blocked": "🚫", "failed": "✗"}.get(t["status"], "?")
+                agent = f" (by {t['assigned_to']})" if t.get("assigned_to") else ""
+                acc = t.get("acceptance", [])
+                met_count = 0
+                if "_acceptance_met" in t:
+                    met_count = sum(
+                        1 for v in t["_acceptance_met"].values() if v.get("met"))
+                criteria = f" — {met_count}/{len(acc)} criteria met" if acc else ""
+                lines.append(f"  {icon} {t['id']} — {t['title']} ({t['status']}){agent}{criteria}")
+            lines.append(f"Files written: {total_files}")
+            lines.append(f"Coordinator events: {coord_count}")
+
+            target = self._cwd / ".taskmesh" / "current.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+    def _get_current_phase(self) -> str:
+        """Return the current pipeline phase."""
+        if not self._team_active and self._task_list is None:
+            return "idle"
+        entries = self._coord_log.all()
+        for e in reversed(entries):
+            if e["type"] == "phase_start":
+                return e.get("metadata", {}).get("phase_name", e["content"])
+        return "init"
+
+    async def _check_resumable(self, user_id: str, current_run_id: str) -> None:
+        """Check for stale running runs and emit run_resumable. Never raises."""
+        try:
+            async with get_session() as session:
+                if session is None:
+                    return
+                from ..db.models import Run as RunModel
+                from sqlalchemy import select
+                result = await session.execute(
+                    select(RunModel)
+                    .where(
+                        RunModel.user_id == user_id,
+                        RunModel.status == "running",
+                        RunModel.id != current_run_id,
+                    )
+                    .limit(1)
+                )
+                stale = result.scalar_one_or_none()
+                if stale is not None:
+                    await self.sio.emit("run_resumable", {
+                        "runId": stale.id,
+                        "brief": stale.brief[:120],
+                        "startedAt": stale.started_at.isoformat() if stale.started_at else "",
+                    }, room=self._room)
+        except Exception:
+            pass
+
+    async def _run_reviewer_phase(self, brief: str) -> None:
+        """Phase 4: Run the reviewer agent over completed tasks + acceptance criteria."""
+        reviewer_agent = self._agents.get("reviewer")
+        if not reviewer_agent or self._task_list is None:
+            return
+
+        await self.sio.emit("reviewer_started", {}, room=self._room)
+        await self._clog("phase_start", "Phase 4: reviewer evaluating output", {
+            "phase_name": "Phase 4: Reviewer",
+        })
+
+        tasks = await self._task_list.all_tasks()
+        files_written: list[str] = []
+        for aid, paths in self._agent_written_files.items():
+            files_written.extend(paths)
+
+        # Build acceptance criteria section
+        criteria_lines: list[str] = []
+        for t in tasks:
+            acc = await self._task_list.get_acceptance(t["id"])
+            if acc:
+                task_criteria = "\n".join(
+                    f"  [{c['id']}] {c['criterion']}"
+                    for c in acc
+                )
+                criteria_lines.append(
+                    f"Task {t['id']} — {t['title']}:\n{task_criteria}"
+                )
+
+        reviewer_prompt = (
+            f"Project brief: {brief[:500]}\n\n"
+            f"## Completed Tasks\n"
+            f"{self._format_tasks_for_reviewer(tasks)}\n\n"
+            f"## Files Written ({len(files_written)} total)\n"
+            + "\n".join(f"  {f}" for f in files_written[:100]) + "\n\n"
+            "## Acceptance Criteria\n"
+            + ("\n\n".join(criteria_lines) if criteria_lines else "  (none defined)\n") + "\n\n"
+            "You are the Reviewer. Evaluate whether all acceptance criteria are met. "
+            "For each criterion, check: met=true if the delivered code satisfies it, "
+            "met=false if it does not. Add a short note explaining your assessment. "
+            "Return ONLY valid JSON — no markdown, no code fences:\n\n"
+            '{"approved": true/false, "summary": "<1-2 sentences>", '
+            '"issues": [], '
+            '"criteria_results": {"<criterion_id>": {"met": true/false, "note": "<why>"}}}'
+        )
+
+        try:
+            _rev_res = await reviewer_agent.run(reviewer_prompt)
+            asyncio.create_task(self._deduct_credits(_rev_res))
+            asyncio.create_task(self._record_tool_call("reviewer", _rev_res))
+            raw = _rev_res["content"]
+        except Exception:
+            await self._emit_log("reviewer", "Reviewer API call failed")
+            return
+
+        result: dict = {}
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if json_match:
+            try:
+                result = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        approved = result.get("approved", True)
+        summary = result.get("summary", "")
+
+        # Update acceptance criteria
+        criteria_results = result.get("criteria_results", {})
+        for criterion_id, cr in criteria_results.items():
+            if isinstance(cr, dict):
+                await self._task_list.set_acceptance_met(
+                    criterion_id, bool(cr.get("met", False)),
+                    checked_by="reviewer",
+                )
+
+        reviewer_result = {
+            "approved": approved,
+            "summary": summary,
+            "issues": result.get("issues", []) or [],
+        }
+
+        await self.sio.emit("reviewer_result", {"result": reviewer_result}, room=self._room)
+
+        if not approved:
+            await self._emit_log("reviewer", f"Review: NOT APPROVED — {summary[:100]}")
+            await self._clog("reviewer_result", f"Reviewer NOT approved: {summary[:200]}", {
+                "approved": False, "issues": len(reviewer_result["issues"]),
+            })
+        else:
+            await self._emit_log("reviewer", f"Review: APPROVED — {summary[:100]}")
+            await self._clog("reviewer_result", "Reviewer approved output", {
+                "approved": True,
+            })
+
+    def _format_tasks_for_reviewer(self, tasks: list[dict]) -> str:
+        lines: list[str] = []
+        for t in tasks:
+            agent = t.get("assigned_to") or "unassigned"
+            output = ", ".join(t.get("output_files", [])[:5]) or "none"
+            lines.append(
+                f"  [{t['status']}] {t['id']} — {t['title']} "
+                f"(by {agent}, output: {output})"
+            )
+        return "\n".join(lines)
+
+    async def _run_search_for_agent(
+        self, agent_id: str, query: str
+    ) -> str:
+        """Run docs.search for an agent query. Returns formatted results string."""
+        from ..core.docs_search import search_docs
+        roots: list[Path] = [self._cwd]
+        upload_dir = getattr(self, "_upload_dir", "")
+        if upload_dir:
+            p = Path(upload_dir)
+            if p.exists():
+                roots.append(p)
+        snippets = search_docs(query, roots, max_results=10)
+        if not snippets:
+            return f"Search for '{query}' returned no results."
+        lines = [f"Search results for '{query}':"]
+        for s in snippets:
+            lines.append(f"  {s.file}:{s.line}  {s.text}")
+        return "\n".join(lines)
 
     # ── git / subprocess helpers ───────────────────────────────────────────────
 
@@ -363,7 +589,7 @@ class Orchestrator:
     async def _start_file_polling(self) -> None:
         async def _poll():
             while True:
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
                 count, files = await self._git_status()
                 await self._emit_files(count, files)
         self._file_poll_task = asyncio.create_task(_poll())
@@ -390,11 +616,15 @@ class Orchestrator:
             target = (self._cwd / rel_path).resolve()
             if not str(target).startswith(str(self._cwd.resolve())):
                 await self._emit_terminal(f"  [skipped] unsafe path: {rel_path}")
+                asyncio.create_task(self._record_file_op(
+                    agent_id, rel_path, "skipped", notes="unsafe path",
+                ))
                 continue
 
             # File-lock check
             acquired, holder = self._file_locks.acquire(rel_path, agent_id)
-            if not acquired:
+            was_conflict = not acquired
+            if was_conflict:
                 await self._emit_terminal(
                     f"  [conflict] {rel_path} held by {holder}, {agent_id} taking over"
                 )
@@ -410,10 +640,26 @@ class Orchestrator:
             else:
                 await self.sio.emit("file_locked", {"path": rel_path, "agentId": agent_id}, room=self._room)
 
+            existed_before = target.exists()
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             written.append(rel_path)
             await self._emit_terminal(f"  wrote {rel_path}")
+
+            if was_conflict:
+                op = "conflict"
+            elif existed_before:
+                op = "overwritten"
+            else:
+                op = "written"
+            size_bytes = len(content.encode())
+            asyncio.create_task(self._record_file_op(
+                agent_id,
+                rel_path,
+                op,
+                size_bytes=size_bytes,
+                notes=(f"overwrote {holder}" if was_conflict and holder else ""),
+            ))
 
             if run_id:
                 async with get_session() as session:
@@ -422,7 +668,7 @@ class Orchestrator:
                             run_id=run_id,
                             path=rel_path,
                             content=content,
-                            size=len(content.encode()),
+                            size=size_bytes,
                         ))
 
         # Release locks now that writing is done
@@ -431,6 +677,72 @@ class Orchestrator:
             await self.sio.emit("file_unlocked", {"path": path, "agentId": agent_id}, room=self._room)
 
         return written
+
+    # ── action audit (fire-and-forget) ────────────────────────────────────────
+
+    async def _record_file_op(
+        self,
+        agent_id: str,
+        rel_path: str,
+        op: str,
+        size_bytes: int = 0,
+        notes: str = "",
+        task_id: int | None = None,
+    ) -> None:
+        """Append an ActionFile row. Never raises — DB outages must not block runs."""
+        run_id = getattr(self, "_run_id", "")
+        if not run_id:
+            return
+        try:
+            async with get_session() as session:
+                if session is None:
+                    return
+                session.add(ActionFile(
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    path=rel_path,
+                    op=op,
+                    size_bytes=size_bytes,
+                    notes=notes or None,
+                ))
+        except Exception:
+            pass
+
+    async def _record_tool_call(
+        self,
+        agent_id: str,
+        result: dict,
+        tool_name: str = "llm.call",
+        task_id: int | None = None,
+    ) -> None:
+        """Append an ActionTool row using telemetry attached by BaseAgent._run_with_retry.
+
+        Looks for _attempts / _status / _error / _duration_ms on result. Falls back
+        to status='ok', attempts=1 when telemetry is missing (older callers).
+        """
+        run_id = getattr(self, "_run_id", "")
+        if not run_id:
+            return
+        try:
+            async with get_session() as session:
+                if session is None:
+                    return
+                session.add(ActionTool(
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    tool_name=tool_name,
+                    model=result.get("model") or None,
+                    prompt_tokens=int(result.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(result.get("completion_tokens", 0) or 0),
+                    status=result.get("_status", "ok"),
+                    attempts=int(result.get("_attempts", 1) or 1),
+                    error=(result.get("_error") or None),
+                    duration_ms=int(result.get("_duration_ms", 0) or 0),
+                ))
+        except Exception:
+            pass
 
     # ── credit deduction (fire-and-forget) ────────────────────────────────────
 
@@ -462,6 +774,7 @@ class Orchestrator:
                     prompt_tokens=prompt,
                     completion_tokens=completion,
                     cost_cents=cost,
+                    year_month=datetime.now(timezone.utc).strftime("%Y-%m"),
                 ))
         except Exception:
             pass  # billing failures must never block runs
@@ -493,10 +806,14 @@ class Orchestrator:
         self._file_locks.clear()
         self._mailbox.clear()
         self._coord_log.clear()
-        self._task_list.clear()
+        self._task_list = SharedTaskList(run_id=self._run_id, session_factory=get_session)
         self._agent_written_files.clear()
         self._team_active = False
         self._cancel_requested = False
+        self._current_brief = brief
+
+        # Check for interrupted runs from a prior process
+        asyncio.create_task(self._check_resumable(user_id, self._run_id))
 
         # Persist run start + increment usage counter
         async with get_session() as session:
@@ -667,6 +984,7 @@ class Orchestrator:
 
         _mgr_res = await self.manager.run(manager_prompt)
         asyncio.create_task(self._deduct_credits(_mgr_res))
+        asyncio.create_task(self._record_tool_call("manager", _mgr_res))
         raw = _mgr_res["content"]
 
         # Parse manager JSON output
@@ -693,26 +1011,30 @@ class Orchestrator:
             for t in tasks:
                 desc = t.get("description", "")
                 title = t.get("title", "Untitled task")
-                self._task_list.add_task(
+                acceptance = t.get("acceptance", [])
+                if not isinstance(acceptance, list):
+                    acceptance = []
+                await self._task_list.add_task(
                     title=title,
                     description=desc,
                     created_by="manager",
                     status="available",
+                    acceptance=acceptance,
                 )
-            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()}, room=self._room)
+            await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
             await self._clog("task_created", f"Created {len(tasks)} tasks: {[t.get('title','') for t in tasks]}")
         else:
             # Fallback: create a single task if no tasks from manager
-            self._task_list.add_task(
+            await self._task_list.add_task(
                 title="Implement the project",
                 description=brief[:200],
                 created_by="manager",
                 status="available",
             )
-            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()}, room=self._room)
+            await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
 
         await self._emit_agent("manager", "done")
-        await self._emit_log("manager", f"Task plan ready — {len(self._task_list.all_tasks())} tasks.")
+        await self._emit_log("manager", f"Task plan ready — {len(await self._task_list.all_tasks())} tasks.")
 
         # Persist task list to disk for crash recovery
         self._task_list.save_to_disk(run_id, self._cwd)
@@ -734,19 +1056,21 @@ class Orchestrator:
         while self._team_active:
             await asyncio.sleep(2)
 
-            # Emit file updates
-            count, files = await self._git_status()
-            await self._emit_files(count, files)
-
-            # Emit task list updates
-            await self.sio.emit("tasks_init", {"tasks": self._task_list.all_tasks()}, room=self._room)
+            # Emit task list updates (only if changed — dirty tracking)
+            if self._task_list.is_dirty():
+                await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
+                self._task_list.mark_clean()
+                asyncio.create_task(self._write_current_md_snapshot())
 
             # Persist task list
             self._task_list.save_to_disk(run_id, self._cwd)
 
+            # Recover stale claims (tasks stuck in 'claimed' for >5 min)
+            asyncio.create_task(self._task_list.recover_stale_claims(300))
+
             # Check if all agents are done
             all_loops_done = all(t.done() for t in self._agent_loops) if self._agent_loops else True
-            all_tasks_done = self._task_list.is_all_done()
+            all_tasks_done = await self._task_list.is_all_done()
 
             if all_loops_done and all_tasks_done:
                 self._team_active = False
@@ -755,7 +1079,10 @@ class Orchestrator:
             if self._cancel_requested:
                 self._team_active = False
 
-        # ── Phase 4: Finalize ──────────────────────────────────────────────────
+        # ── Phase 4: Reviewer ───────────────────────────────────────────────────
+        await self._run_reviewer_phase(brief)
+
+        # ── Phase 5: Finalize ──────────────────────────────────────────────────
         # Cancel any lingering agent loops
         for t in self._agent_loops:
             if not t.done():
@@ -772,7 +1099,7 @@ class Orchestrator:
         count, files = await self._git_status()
         await self._emit_files(count, files)
 
-        summary = self._task_list.summary()
+        summary = await self._task_list.summary()
         await self._emit_log("manager", f"Run complete — {summary}")
         await self._clog("run_complete", f"Task summary: {summary}")
 
@@ -810,9 +1137,9 @@ class Orchestrator:
                 )
 
             # Try to claim a task
-            task = self._task_list.claim_task(agent_id)
+            task = await self._task_list.claim_task(agent_id)
             if task is None:
-                if self._task_list.is_all_done():
+                if await self._task_list.is_all_done():
                     break
                 await asyncio.sleep(1)
                 continue
@@ -824,7 +1151,7 @@ class Orchestrator:
                 "agent": agent_id, "task": task_id,
             })
 
-            self._task_list.start_task(task_id, agent_id)
+            await self._task_list.start_task(task_id, agent_id)
 
             # Build the task prompt
             context_parts = [f"Project brief: {brief[:300]}"]
@@ -856,7 +1183,48 @@ class Orchestrator:
 
             _exec_res = await agent.run(prompt)
             asyncio.create_task(self._deduct_credits(_exec_res))
+            _task_id_int = task["id"] if isinstance(task.get("id"), int) else None
+            asyncio.create_task(self._record_tool_call(agent_id, _exec_res, task_id=_task_id_int))
             result = _exec_res["content"]
+
+            # Search-block parsing — detect <search>...</search> before FILE parser.
+            # Re-prompt with results, cap at 3 rounds to avoid infinite loops.
+            _SEARCH_RE = re.compile(r'<search>(.+?)</search>', re.DOTALL | re.IGNORECASE)
+            search_rounds = 0
+            while search_rounds < 3:
+                searches = _SEARCH_RE.findall(result)
+                if not searches:
+                    break
+                search_rounds += 1
+                search_results: list[str] = []
+                for query in searches:
+                    q = query.strip()[:200]
+                    if not q:
+                        continue
+                    sr = await self._run_search_for_agent(agent_id, q)
+                    search_results.append(sr)
+                    # Log search tool call
+                    asyncio.create_task(self._record_tool_call(
+                        agent_id,
+                        {"prompt_tokens": 0, "completion_tokens": 0, "_status": "ok",
+                         "_error": json.dumps({"query": q, "results": sr[:500]}),
+                        },
+                        tool_name="docs.search",
+                        task_id=_task_id_int,
+                    ))
+                if not search_results:
+                    break
+                enriched = (
+                    result.replace("<search>", "[SEARCH RAN] <search>").replace("</search>", "</search> [SEARCH RAN]")
+                    + "\n\n[SEARCH RESULTS]\n" + "\n---\n".join(search_results)
+                    + "\n[/SEARCH RESULTS]\n\n"
+                    "Use the search results above to refine your answer. Do NOT output <search> blocks — "
+                    "search has already been completed. Just write the code."
+                )
+                _exec_res = await agent.run(enriched)
+                asyncio.create_task(self._deduct_credits(_exec_res))
+                asyncio.create_task(self._record_tool_call(agent_id, _exec_res, task_id=_task_id_int))
+                result = _exec_res["content"]
 
             # Parse FILE blocks from agent output
             parsed_files: list[tuple[str, str]] = []
@@ -882,8 +1250,9 @@ class Orchestrator:
             await self._bus_send(agent_id, "manager", f"Completed '{task['title']}': {summary}")
 
             # Mark task complete
-            self._task_list.complete_task(task_id, agent_id, written)
+            await self._task_list.complete_task(task_id, agent_id, written)
             await self._emit_task_done(task_id)
+            asyncio.create_task(self._write_current_md_snapshot())
 
             await self._emit_agent(agent_id, "done")
             await self._clog("task_completed", f"{agent_id} completed '{task['title']}'", {

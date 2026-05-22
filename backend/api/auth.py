@@ -20,16 +20,18 @@ Environment variables required:
   GITHUB_AUTH_REDIRECT_URI  — e.g. http://localhost:8000/api/auth/github/callback
   FRONTEND_URL              — where to redirect after OAuth (e.g. http://localhost:5173)
 """
+import hmac
 import os
+import secrets
 import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from ..auth.auth import hash_password, verify_password, create_token, require_auth
+from ..auth.auth import hash_password, verify_password, create_token, require_auth, set_token_cookie
 
 router = APIRouter(prefix="/auth")
 
@@ -89,7 +91,9 @@ async def register(body: RegisterRequest):
         await session.flush()
 
     token = create_token(user_id, email, user_name)
-    return {"token": token, "user": {"id": user_id, "email": email, "name": user_name}}
+    response = JSONResponse({"user": {"id": user_id, "email": email, "name": user_name}})
+    set_token_cookie(response, token)
+    return response
 
 
 @router.post("/login")
@@ -112,7 +116,9 @@ async def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_token(user.id, user.email, user.name or "")
-    return {"token": token, "user": {"id": user.id, "email": user.email, "name": user.name}}
+    response = JSONResponse({"user": {"id": user.id, "email": user.email, "name": user.name}})
+    set_token_cookie(response, token)
+    return response
 
 
 @router.get("/google/url")
@@ -127,15 +133,25 @@ async def google_auth_url():
         "&scope=openid%20email%20profile"
         "&access_type=offline"
         "&prompt=select_account"
+        f"&state={secrets.token_hex(16)}"
     )
-    return {"auth_url": url}
+    response = JSONResponse({"auth_url": url})
+    response.set_cookie("oauth_state", url.split("&state=")[1], httponly=True, samesite="lax", max_age=300, path="/api/auth")
+    return response
 
 
 @router.get("/google/callback")
-async def google_callback(code: str, state: str = ""):
+async def google_callback(code: str, state: str = "", request: "Request | None" = None):
     """Exchange Google OAuth code for user info, upsert user, issue JWT, redirect to frontend."""
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="Google OAuth not configured")
+
+    # Verify anti-CSRF state parameter
+    from fastapi import Request as _Request
+    if request and isinstance(request, _Request):
+        stored = request.cookies.get("oauth_state", "")
+        if not stored or not hmac.compare_digest(stored, state):
+            raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
         # Exchange code for access token
@@ -209,8 +225,11 @@ async def google_callback(code: str, state: str = ""):
         user_id = user.id
 
     jwt_token = create_token(user_id, email, name)
-    # Pass JWT in URL hash so it never hits a server log
-    return RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
+    # Pass JWT in URL hash so it never hits a server log.
+    # The HttpOnly cookie is set alongside for XSS-safe auth.
+    response = RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
+    set_token_cookie(response, jwt_token)
+    return response
 
 
 @router.get("/github/url")
@@ -223,15 +242,24 @@ async def github_auth_url():
         f"&redirect_uri={GITHUB_AUTH_REDIRECT_URI}"
         "&scope=user:email"
         "&prompt=select_account"
+        f"&state={secrets.token_hex(16)}"
     )
-    return {"auth_url": url}
+    response = JSONResponse({"auth_url": url})
+    response.set_cookie("oauth_state", url.split("&state=")[1], httponly=True, samesite="lax", max_age=300, path="/api/auth")
+    return response
 
 
 @router.get("/github/callback")
-async def github_callback(code: str, state: str = ""):
+async def github_callback(code: str, state: str = "", request: Request | None = None):
     """Exchange GitHub OAuth code for user info, upsert user, issue JWT, redirect to frontend."""
     if not GITHUB_AUTH_CLIENT_ID or not GITHUB_AUTH_CLIENT_SECRET:
         raise HTTPException(status_code=503, detail="GitHub login not configured")
+
+    # Verify anti-CSRF state parameter
+    if request:
+        stored = request.cookies.get("oauth_state", "")
+        if not stored or not hmac.compare_digest(stored, state):
+            raise HTTPException(status_code=400, detail="Invalid state parameter")
 
     async with httpx.AsyncClient() as client:
         # Exchange code for access token
@@ -316,7 +344,10 @@ async def github_callback(code: str, state: str = ""):
         user_id = user_row.id
 
     jwt_token = create_token(user_id, email, name)
-    return RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
+    response = RedirectResponse(f"{FRONTEND_URL}/auth/callback#{jwt_token}")
+    set_token_cookie(response, jwt_token)
+    response.delete_cookie("oauth_state", path="/api/auth")
+    return response
 
 
 @router.get("/me")
@@ -326,3 +357,17 @@ async def get_me(user: dict = Depends(require_auth)):
         "email": user.get("email", ""),
         "name":  user.get("name", ""),
     }
+
+
+@router.post("/logout")
+async def logout_auth():
+    """Clear the HttpOnly auth cookie. No auth required — if no cookie, it's a no-op."""
+    response = JSONResponse({"status": "logged_out"})
+    response.delete_cookie(
+        key="token",
+        path="/",
+        httponly=True,
+        secure=os.environ.get("ENVIRONMENT") == "production",
+        samesite="strict",
+    )
+    return response

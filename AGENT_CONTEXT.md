@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-21 (Full Codebase Audit session)
+Last updated: 2026-05-21 (Phase C — Acceptance, Reviewer, Docs Search shipped)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -144,6 +144,9 @@ MiniMaxClone/                          project root
       __init__.py
       orchestrator.py                  5-phase pipeline + coordination layer (main file)
       config_loader.py                 Loads agent-team.config.json; defines DEFAULT_AGENTS
+      task_list.py                     SharedTaskList — DB-backed task queue with in-memory fallback
+      file_upload.py                   File upload validation, storage, text preview
+      docs_search.py                   NEW — grep-based search over upload_dir + PROJECT_DIR
 
     db/
       __init__.py
@@ -218,15 +221,23 @@ Never commit .env or .env.local. Use .env.example and .env.local.example as temp
 BACKEND VARIABLES:
 
   OPENCODE_GO_API_KEY
-    Single master API key for all users. BYOK (per-user keys) was removed.
-    If a user has not set a personal key, the orchestrator falls back to this env var.
-    Obtained from https://opencode.ai/zen after subscribing to Go.
+    Single master API key for the entire app. BYOK (per-user keys) was removed.
+    Obtained from https://opencode.ai/zen after subscribing to Zen.
     (Future: replace with OPENROUTER_API_KEY when switching to OpenRouter.)
 
   SECRET_KEY
     Required in production. Signs all JWTs. Generate with:
       python3 -c "import secrets; print(secrets.token_hex(32))"
     Default in code: "dev-secret-change-in-production" (only safe with AUTH_DISABLED=true)
+    Emits RuntimeWarning when the default is used outside AUTH_DISABLED mode.
+
+  JWT_TOKEN_DAYS
+    Optional. JWT expiry duration in days. Default: 30.
+    Set via env: JWT_TOKEN_DAYS=7
+
+  CORS_ALLOWED_ORIGINS
+    Comma-separated list of allowed frontend origins for CORS and Socket.IO.
+    Default: "*" (dev only — permits all origins). Production: set to your frontend URL(s).
 
   AUTH_DISABLED
     Set to "true", "1", or "yes" to bypass all JWT verification AND billing gates.
@@ -299,6 +310,10 @@ BACKEND VARIABLES:
     Directory where agents write output files. Defaults to current working directory.
     Example: /Users/you/projects/my-output
 
+  UPLOAD_TOKEN_TTL
+    Maximum age for upload tokens in seconds before auto-cleanup. Default: 3600 (1 hour).
+    Tokens expire after this duration; background task cleans every 5 minutes.
+
   OPENROUTER_API_KEY
     Only needed if you switch to OpenRouter. Not active yet.
 
@@ -309,6 +324,13 @@ FRONTEND VARIABLES:
     (BillingGate skips the /api/billing/usage check entirely).
     Backend must also have AUTH_DISABLED=true for API calls to work.
     Only for local development.
+
+  VITE_SOCKET_URL
+    Optional. Direct URL for Socket.IO WebSocket connections in production.
+    Set in Vercel dashboard to your backend URL so WebSockets bypass Vercel's HTTP-only
+    proxy and get true real-time push instead of fallback long-polling.
+    Example: VITE_SOCKET_URL=https://taskmesh-api.onrender.com
+    In local dev, leave empty — the Vite dev server proxies /socket.io to localhost:8000.
 
 
 ================================================================================
@@ -520,6 +542,32 @@ THERE ARE NO ADDITIONAL TABLES for the multi-agent coordination layer.
 FileLockRegistry, AgentMailbox, and CoordinatorLog are in-memory Python objects
 created per run in the Orchestrator class. They reset at the start of every run
 and are never persisted to the database.
+
+TABLE: tasks (Phase A — DB-backed coordination)
+  Purpose: Persisted task queue. Replaces the in-memory SharedTaskList when DATABASE_URL is set.
+  Columns: id (int PK), run_id (str, idx), title, description, status (available|claimed|in_progress|completed|blocked|failed),
+           assigned_to, created_by, output_files (JSON list), created_at, started_at, completed_at
+  Notes: Uses SELECT FOR UPDATE SKIP LOCKED for atomic claiming. Falls back to in-memory list in dev mode.
+
+TABLE: coordinator_events (Phase A)
+  Purpose: Persistent audit log. Replaces in-memory CoordinatorLog when DATABASE_URL is set.
+  Columns: id (int PK), run_id (str, idx), event_type (str), agent_id, content, metadata_json (JSON), created_at
+  Notes: Append-only. Fire-and-forget insert via asyncio.create_task(). Never raises.
+
+TABLE: action_files (Phase B)
+  Purpose: Per-agent file operation log. Append-only.
+  Columns: id (int PK), run_id, agent_id, task_id, path, op (written|overwritten|conflict|skipped), size_bytes, notes, created_at
+
+TABLE: action_tools (Phase B)
+  Purpose: Per-agent LLM call log with retry visibility.
+  Columns: id (int PK), run_id, agent_id, task_id, tool_name, model, prompt_tokens, completion_tokens,
+           status (ok|retried|failed), attempts, error, duration_ms, created_at
+
+TABLE: task_acceptance (Phase C)
+  Purpose: Per-task acceptance criteria evaluated by the reviewer agent.
+  Columns: id (int PK), task_id (str), run_id (str, idx), criterion (text), met (bool, default false),
+           met_order (int), checked_by, checked_at
+  Notes: Append-only except for met/checked_by/checked_at flip during Phase 4.
 
 
 ================================================================================
@@ -996,111 +1044,85 @@ SERVER-TO-CLIENT EVENTS:
     Emitted: whenever _bus_send() is called in the orchestrator
     Frontend: MAILBOX_MSG action — appended to mailbox array (capped at 50 entries)
 
+  run_resumable (Phase C)
+    Payload: {runId: string, brief: string, startedAt: string}
+    Emitted: on orchestrator startup if DB has a stale running run
+    Frontend: RUN_RESUMABLE action — logs to terminal (future: "Resume?" prompt)
+
 CLIENT-TO-SERVER:
-  No Socket.IO events from client to server. All commands go through REST API.
+  auth — Emitted immediately after connection with {token: JWT-string}.
+    Backend verifies JWT, enters socket into room "user:{user_id}".
+    All run-scoped events are emitted only to that room, isolating users.
+    Returns {ok: true, room: "user:..."} on success or {ok: false, error: "..."} on failure.
 
 
 ================================================================================
 SECTION 11: MULTI-AGENT PIPELINE — COMPLETE FLOW
 ================================================================================
 
-Entry point: POST /api/start-project triggers asyncio.create_task(orchestrator.run(brief, user_id,
-  agent_limit, plan)). The run() method stores the task reference in self._run_task for
-  cancellation and stores user_id in self._current_user_id for credit deduction.
+Entry point: POST /api/start-project creates a per-user Orchestrator, generates a run_id,
+and spawns orchestrator.run(brief, user_id, agent_limit, plan, upload_dir, run_id) via
+asyncio.create_task(). Each user gets their own orchestrator + agents — no queueing.
+
+ARCHITECTURE (5-phase dynamic coordination):
+  Phase 1 — Manager creates tasks. The manager agent receives the brief (plus uploaded
+    file context) and produces a JSON task breakdown with acceptance criteria per task.
+    The orchestrator parses this JSON and dispatches each task into a SharedTaskList
+    with status "available". Each criterion is inserted as a task_acceptance row.
+  Phase 2 — Agents self-coordinate. All non-manager, non-reviewer agents are launched
+    concurrently in an agent loop. Each agent: claims an available task from the shared
+    queue → builds a prompt with context (brief, mailbox messages, previously written
+    file summaries) → optionally issues <search>query</search> blocks (capped at 3 rounds)
+    → calls agent.run() → parses FILE blocks from the output → writes
+    files to disk with lock tracking → auto-commits → marks task complete → loops back.
+    Agents exit when all tasks are in terminal states (completed/failed/blocked).
+  Phase 3 — Monitor. The orchestrator polls every 2 seconds: emits file updates, emits
+    task list snapshots, regenerates .taskmesh/current.md crash-recovery snapshot,
+    recovers stale claims (tasks stuck in 'claimed' for >5 min).
+  Phase 4 — Reviewer (NEW in Phase C). After all executors finish, the reviewer agent
+    evaluates the completed output against acceptance criteria. It receives: the brief,
+    task list with criteria, files written list. Returns JSON: {approved, summary, issues,
+    criteria_results: {<criterion_id>: {met, note}}}. Flips task_acceptance.met per result.
+    Emits reviewer_started → reviewer_result Socket.IO events with approved/not flag.
+  Phase 5 — Finalize. Cancels lingering agent loops, persists agents_used, emits final
+    file counts + summary, emits run_done.
+
+COORDINATION OBJECTS (reset at start of each run, one per-per-user orchestrator):
+  SharedTaskList: in-memory task queue. Agents call claim_task(), start_task(),
+    complete_task() autonomously. Status flow: pending → available → claimed →
+    in_progress → completed. Persisted to PROJECT_DIR/.taskmesh/tasks-<run_id>.json
+    for crash recovery.
+  FileLockRegistry: tracks which agent holds exclusive ownership of each file path.
+  AgentMailbox: stores typed messages between agents (in-memory list).
+  CoordinatorLog: structured log of every coordinator decision.
 
 PLAN-BASED RESTRICTIONS (applied before pipeline runs):
   If plan != "pro", models in PRO_ONLY_MODELS are swapped to STARTER_MODEL_FALLBACK
-    before _setup_agents() is called. This affects webdev, researcher, manager, reviewer
-    which default to Pro-only models.
+    before _setup_agents() is called.
   agent_limit=3 for Starter; None for Pro.
-  See Section 15 for PRO_ONLY_MODELS list and STARTER_MODEL_FALLBACK.
-
-COORDINATION OBJECTS (reset at the start of every run):
-  FileLockRegistry: tracks which agent holds exclusive ownership of each file path
-  AgentMailbox: stores typed messages between agents (in-memory list)
-  CoordinatorLog: structured log of every coordinator decision
-  _executor_outputs: dict[agent_id -> raw LLM output string]
-  _executor_files: dict[agent_id -> list of file paths written]
+  See Section 15 for PRO_ONLY_MODELS list (26 models) and STARTER_MODEL_FALLBACK.
 
 CREDIT DEDUCTION (fire-and-forget after every agent.run() call):
-  base_agent.run() now returns a dict: {content, prompt_tokens, completion_tokens, model}
-  After every agent call (selector, planners, manager, executors, reviewer):
-    asyncio.create_task(self._deduct_credits(result))
+  base_agent.run() returns dict: {content, prompt_tokens, completion_tokens, model}
+  After every agent call: asyncio.create_task(self._deduct_credits(result))
   _deduct_credits() calls billing.calc_cost_cents() and subtracts from UserCredits.balance_cents.
+  Also logs a ZenUsage row per call for analytics/spend tracking.
   If cost <= 0, user_id is "anonymous", or DB unavailable: no-op.
   Billing failures NEVER block or interrupt a run.
 
-PHASE 0 — AGENT SELECTION:
-  A dedicated "selector" BaseAgent (uses manager model with low temperature=0.3, max_tokens=256)
-  receives the brief and the list of non-manager, non-reviewer agents.
-  Prompt asks for JSON: {"selected": ["id1", "id2"], "reason": "one sentence"}
-  The selector picks only the agents needed. Small projects don't need all 8 agents.
-  If JSON parsing fails, falls back to the full team.
-  AGENT CAP: if agent_limit is set (Starter: 3), selected_ids is sliced to agent_limit.
-    The reason string gets "(capped at N for Starter plan)" appended.
-  Emits: agents_selected {agentIds: [...]}  (post-cap list)
-  Emits coordinator_log: phase_start, agent_assigned
-  Token cost: deducted after selector.run() call.
-
-PHASE 1 — PLANNERS (parallel):
-  All agents where planner=true run simultaneously via asyncio.gather.
-  Each planner receives the project brief.
-  If agent is a Scout (id="scout" or role in {"scout", "researcher", "tech lead"}):
-    Gets a structured research prompt with exact output sections:
-      ## Research Summary, ## Relevant Patterns, ## Recommendations, ## Potential Issues
-    Instructed NOT to write implementation code.
-  Otherwise: gets a generic planning prompt asking for a planning spec within their domain.
-  Each planner's output is stored in planner_outputs dict keyed by agent_id.
-  Each planner calls _bus_send to send a truncated summary to "manager".
-  Token cost: deducted after each planner's agent.run() call.
-  Emits coordinator_log: phase_start
-
-PHASE 2 — SYNTHESIS:
-  ManagerAgent.run() is called with combined brief + all planner specs.
-  Manager's system prompt (built by build_manager_system() in manager_agent.py):
-    Lists all executor agents (not planners, not reviewer) and their 3-char tags
-    Specifies the required JSON output format:
-      {feature: "3-5 word name", analysis: "1-2 sentences", tasks: [{id, title, tag}]}
-    Tags: first 3 chars of agent ID uppercased: "MGR", "BAC", "FRO", "TES", "DOC", "LOG"
-    Explicitly says planners already ran and must NOT be assigned tasks
-  Manager output is parsed for JSON. If parsing fails, plan is empty.
-  Token cost: deducted after manager.run() call.
-  Emits: feature_set {feature}, tasks_init {tasks}
-
-PHASE 3 — EXECUTORS (concurrent):
-  Each executor runs via asyncio.gather with 0.5s stagger.
-  Prompt: project context + planner specs + mailbox messages + task list + FILE_FORMAT_INSTRUCTION.
-  For each task:
-    result = await agent.run(prompt)  → returns dict, not string
-    asyncio.create_task(self._deduct_credits(result))
-    content = result["content"]  → used as the LLM output
-    Writes [FILE:] blocks to disk (see FILE WRITING below)
-    Auto-commits written files
-    Marks task done, sends mailbox summary to manager
-
-FILE WRITING (_write_agent_files):
-  Parses output with regex: r'\[FILE:\s*([^\]\n]+)\]\n?(.*?)\n?\[/FILE\]' (DOTALL)
-  For each match:
-    Guards against path traversal (target.resolve() must start with PROJECT_DIR)
-    Acquires FileLock. Conflict: force_acquire (last-write wins), emits file_conflict
-    Creates parent dirs, writes content, saves RunFile to DB
-    After all files: releases all locks, emits file_unlocked for each
+FILE WRITING (_write_files_from_parsed):
+  Agents output files in the format: --- FILE: path --- / content / --- END FILE ---
+  Parsed by regex. Path traversal protection. FileLockRegistry acquires/releases per file.
+  RunFile rows stored in DB.
 
 AUTO-COMMIT (_auto_commit):
   git add -- {files} then git commit -m "feat({agent_id[:6]}): {task_title[:60]}"
   Silently swallowed if git not initialized or fails. Run continues regardless.
 
-PHASE 4 — REVIEWER (if reviewer agent in config):
-  Identified by: id=="reviewer" OR role.lower() in {"reviewer", "code reviewer", "code review"}
-  Excluded from Phase 0 and Phase 3 entirely.
-  Reads all files written during run (first 600 chars each).
-  Expects JSON: {approved: bool, summary: str, issues: [{file, issue, severity, agent}]}
-  On approval: emits reviewer_result, sends mailbox approval to manager.
-  On rejection: sends feedback to affected agents, triggers one retry cycle.
-  Token cost: deducted after reviewer.run() call.
-
 CANCELLATION:
-  Frontend POST /api/cancel -> orchestrator.cancel() -> self._run_task.cancel()
+  Frontend POST /api/cancel → routes.py looks up user's orchestrator by user_id →
+  orchestrator.cancel() sets _cancel_requested=True, then cancels _run_task.
+  Agent loops check _cancel_requested on each iteration and exit cleanly.
   asyncio.CancelledError propagates, run sets status to "cancelled", emits run_done.
 
 
@@ -1108,10 +1130,10 @@ CANCELLATION:
 SECTION 12: AGENT CONFIGURATION
 ================================================================================
 
-The runtime config is in agent-team.config.json at the PROJECT_DIR root.
-It is hot-loaded at the start of each run via load_config() in config_loader.py.
-Users can edit it via the Settings panel in the UI (GET /api/config, PUT /api/config).
-PUT /api/config is Pro plan only.
+The runtime config is hot-loaded at the start of each run from the per-user `users.config_json`
+column (Pro users) or the disk file `agent-team.config.json` (Starter users / global default).
+Users can edit their config via the Settings panel in the UI (GET /api/config, PUT /api/config).
+PUT /api/config is Pro plan only; writes to the user's DB row, not the shared file.
 
 Top-level fields:
   sprint: string  — displayed in the header (e.g. "Sprint #1")
@@ -1200,28 +1222,17 @@ Step 2: In backend/agents/base_agent.py:
   Uncomment the block between "── OpenRouter (inactive" and "── End OpenRouter ──"
   This block defines:
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-    OPENROUTER_EXTRA_HEADERS = {"HTTP-Referer": ..., "X-Title": "Agent Team"}
-    OPENROUTER_MODEL_MAP = {
-      "manager":    "deepseek/deepseek-chat",
-      "webdev":     "moonshotai/kimi-k2",
-      "researcher": "mistralai/mistral-large-2411",
-      "backend":    "deepseek/deepseek-chat",
-      "frontend":   "google/gemma-2-27b-it",
-      "tester":     "mistralai/ministral-8b",
-      "docs":       "mistralai/mistral-7b-instruct",
-      "logger":     "meta-llama/llama-3.1-8b-instruct",
-      "reviewer":   "qwen/qwen-2.5-coder-32b-instruct",
-    }
+    OPENROUTER_EXTRA_HEADERS = {"HTTP-Referer": ..., "X-Title": "TaskMesh"}
     _get_openrouter_client() function
 
 Step 3: In backend/core/config_loader.py:
   Uncomment the OPENROUTER_BASE_URL and OPENROUTER_DEFAULT_AGENTS lists.
   Replace DEFAULT_BASE_URL with OPENROUTER_BASE_URL.
-  Replace DEFAULT_AGENTS model IDs with OPENROUTER equivalents.
+  Replace DEFAULT_AGENTS model IDs with OpenRouter equivalents.
   Change the env var lookup line from OPENCODE_GO_API_KEY to OPENROUTER_API_KEY.
 
-Note: The MODEL_PRICING table in billing.py already includes OpenRouter equivalents
-  for the Pro-only models (deepseek/deepseek-chat, moonshotai/kimi-k2, etc.).
+Note: The MODEL_PRICING table in billing.py uses Zen model IDs. A mapping to
+  OpenRouter equivalents would need to be added when switching.
 
 
 ================================================================================
@@ -1313,25 +1324,11 @@ SIDEBAR (Sidebar.tsx):
 
 SETTINGS PANEL (SettingsPanel.tsx):
   Opens as a slide-in overlay from the right.
-  Loads current config via GET /api/config.
+  Loads current config via GET /api/config (per-user, from DB).
   Two tabs: "Project Settings" and "Account".
-  Project Settings tab:
-    - Theme picker (5 themes in a grid)
-    - Sprint label input
-    - OpenCode API Key section (labeled "OpenCode API Key", supports Go and Zen plans)
-    - Agents section:
-      - "+ Add" button — adds next available preset agent or a generic one
-      - "Recommended layout" button — one-click 9-agent configuration:
-        Shows confirmation prompt ("Apply and replace"). On confirm, replaces all agents with:
-        manager/deepseek-v4-pro, webdev/kimi-k2.6, researcher/kimi-k2.5,
-        backend/deepseek-v4-flash, frontend/mimo-v2.5, tester/qwen3.5-plus,
-        docs/qwen3.5-plus, logger/qwen3.5-plus, reviewer/deepseek-v4-pro
-        Warns if no API key is configured.
-      - Each agent row: expandable to show role preset selector, custom ID, system prompt,
-        model dropdown (Flagship/Balanced/Fast/Code groups), temperature/top_p/top_k sliders,
-        "Recommended" sampler values button, thinking budget slider, color picker, remove button
-  Account tab: identity display, change email/password (TODO stubs), billing info, OAuth links, danger zone
-  Footer: Close button, Save & Apply button (with distinct normal/saving/saved visual states)
+  Project Settings tab: theme picker, sprint label, OpenCode Zen API key, agent roster.
+  Account tab: navigates to the dedicated /account page.
+  Footer: Close button, Save & Apply button (project tab only).
 
 PROJECTS DASHBOARD (ProjectsDashboard.tsx):
   Three-column layout: run list | file list | file content viewer
@@ -1569,7 +1566,8 @@ FRONTEND DEPLOYMENT:
   to call the backend directly.
 
 CORS IN PRODUCTION:
-  Currently: allow_origins=["*"] in backend/main.py — must be restricted to FRONTEND_URL.
+  CORS_ALLOWED_ORIGINS env var controls both FastAPI CORSMiddleware and Socket.IO origins.
+  Defaults to "*" for dev; set to comma-separated frontend URL(s) in production.
 
 ROLLBACK:
   No automated rollback. Database schema is additive (create_all with checkfirst).
@@ -1672,27 +1670,25 @@ FIXED ISSUES (listed for historical awareness):
      after `fetchUsage()` so BillingGate sees updated plan and allows passage.
 
 OPEN ISSUES:
-  1. GitHub access_token in user_github stored in plaintext. Encrypt before production.
-  2. CORS allow_origins=["*"]. Must be restricted to FRONTEND_URL in production.
-  3. File locks are last-write-wins, not true mutual exclusion.
-  4. Auto-commit only works if PROJECT_DIR is inside a git repository.
-  5. No health check endpoint (GET /api/health).
-  6. Reviewer retry is capped at 1 cycle.
-  7. run_count in user_usage is incremented at run start, not completion.
-  8. No persistent mailbox — messages lost on server restart.
-  9. No rate limiting on any API endpoints.
- 10. No email verification for email/password registration.
- 11. PyJWT and bcrypt are not in requirements.txt — must be installed manually.
- 12. Agent config (agent-team.config.json) is per-server, not per-user.
-     Two users changing config simultaneously: one's change wins.
+   1. GitHub access_token in user_github stored in plaintext. Encrypt before production.
+   2. File locks are last-write-wins, not true mutual exclusion.
+   3. Auto-commit only works if PROJECT_DIR is inside a git repository.
+   4. No health check endpoint (GET /api/health).
+   5. run_count in user_usage is incremented at run start, not completion.
+   6. No persistent mailbox — messages lost on server restart.
+   7. No rate limiting on any API endpoints.
+   8. No email verification for email/password registration.
+   9. Agent config (agent-team.config.json) is per-server, not per-user.
+      Two users changing config simultaneously: one's change wins.
+  10. Upload tokens are in-memory only — lost on backend restart.
 
 LIMITATIONS:
-  - Single orchestrator instance: one run at a time per server process.
-  - Agent LLM calls are sequential within an agent; agents within a phase run concurrently.
-  - Reviewer does not execute code — reviews text output only.
-  - Coordinator does not read existing codebase before planning.
-  - Theme is stored in localStorage, not in user profile.
-  - PAYG packs require an active subscription to use (packs alone don't unlock runs).
+   - Agent LLM calls are sequential within an agent; agents within the team run concurrently.
+   - Coordinator does not read existing codebase before planning.
+   - Theme is stored in localStorage, not in user profile.
+   - PAYG packs require an active subscription to use (packs alone don't unlock runs).
+   - No reviewer phase in current pipeline (reviewer agent is excluded from executor loop).
+   - Socket.IO events are scoped to user:{id} rooms for multi-user isolation.
 
 
 ================================================================================
@@ -1841,7 +1837,7 @@ Check GitHub connection:
 SECTION 24: CURRENT STATUS — WHAT IS DONE AND WHAT REMAINS
 ================================================================================
 
-Last updated: 2026-05-20 (Model List Overhaul session)
+Last updated: 2026-05-21 (Multi-User Orchestrator + Upload TTL + Docs Sync session)
 This section tracks the real-world setup state for this specific deployment.
 Read this section first in a new session to know exactly where to pick up.
 
@@ -1954,28 +1950,82 @@ DONE — Dashboard UX & Agent Layout (2026-05-20)
 DONE — Model List Overhaul (2026-05-20)
 --------------------------------------------------------------------------------
 
-[x] Curated 13-model set replacing 40+ old models
-    Flagship (6, Pro-only): deepseek-v4-pro, glm-5.1, kimi-k2.6,
-      mimo-v2.5-pro, minimax-m2.7, qwen3.6-plus
-    Balanced (6, Starter OK): deepseek-v4-flash, glm-5, kimi-k2.5,
-      mimo-v2.5, minimax-m2.5, qwen3.5-plus
-    Fast (1, Starter OK): nemotron-3-super
+[x] Curated 46-model set replacing 13 + 40+ old models
+    Flagship Pro (16): 6 original Flagship + claude-opus-4-{1,5,6,7} + claude-sonnet-4/{5,6} +
+      gpt-5.4-pro / gpt-5.5-pro / gpt-5.4 / gpt-5.5 + gemini-3.1-pro
+    Balanced (22): 6 original Balanced + DeepSeek V4 Flash + claude-haiku-4-5 +
+      gpt-5/5.1/5.2 + gpt-*-codex + gemini-3-flash / 3.5-flash + others
+    Budget (8): nemotron-3-super + deepseek-v4-flash-free + big-pickle +
+      nemotron-3-super-free + minimax-m2.5-free + gpt-5-nano/5.4-nano + grok-build-0-1
 
-[x] MODEL_GROUPS in SettingsPanel.tsx — 3 categories (removed "Code", renamed "Fast/Small"→"Fast")
+[x] MODEL_GROUPS in SettingsPanel.tsx — 3 categories: Flagship (Pro), Balanced, Budget
 
 [x] MODEL_RECOMMENDATIONS in SettingsPanel.tsx — sampling defaults for all 46 models
 
-[x] MODEL_PRICING in billing.py — per-token rates for all 46 models, old entries purged
+[x] MODEL_PRICING in billing.py — per-token rates for all 46 models
 
-[x] PRO_ONLY_MODELS in billing.py — all 6 Flagship models (removed OpenRouter equivalents)
+[x] PRO_ONLY_MODELS in billing.py — 26 models (threshold: prompt >0.2¢/1K ~$2/M input)
 
-[x] OpenRouter comment blocks cleaned in base_agent.py and config_loader.py
+[x] GPT_MODEL_IDS (17) + ANTHROPIC_MODEL_IDS (12) in base_agent.py for model routing
 
-[x] Existing agent-team.config.json already used new IDs — no migration needed
+[x] ZenUsage table in models.py for per-call token usage logging
 
-[x] STARTER_MODEL_FALLBACK = "deepseek-v4-flash" (Balanced, cheapest Flagship-capable)
+[x] /api/account/zen-summary endpoint for monthly spend analytics
+
+[x] AccountPage "Usage & Billing" section — monthly spend, runs, lifetime, balance
 
 --------------------------------------------------------------------------------
+
+[x] Multi-user concurrent orchestrator (completed 2026-05-21)
+    - _orchestrators: dict[str, Orchestrator] replaces singleton
+    - Per-user start_project creates fresh orchestrator; cancel targets caller only
+    - Socket.IO 'auth' event enters user into "user:{id}" room
+    - All 20+ sio.emit() calls scoped to room=self._room
+    - On run completion, orchestrator removed from dict via on_done callback
+    - Lifespan shutdown cancels all active orchestrators
+
+[x] Vercel WebSocket bypass (completed 2026-05-21)
+    - VITE_SOCKET_URL env var for direct backend WebSocket connection
+    - Bypasses Vercel's HTTP-only proxy; production gets true real-time push
+    - Frontend emits 'auth' event on connect for JWT-based room joining
+
+[x] Per-user agent config (completed 2026-05-21)
+    - `users.config_json` column stores per-user config for Pro users
+    - `PUT /api/config` writes to DB row, not shared disk file
+    - `GET /api/config` returns calling user's config (DB → disk fallback)
+    - `start_project` passes per-user config to orchestrator
+    - Disk file remains as global default template (never overwritten by Pro users)
+
+[x] Retry on Zen API failures (completed 2026-05-21)
+    - `_run_with_retry()` wrapper: 3 attempts, exponential backoff (2/4/8s + jitter)
+    - Wraps both Anthropic Messages API and OpenAI Chat Completions paths
+    - Handles APIStatusError, APITimeoutError, APIConnectionError
+    - Returns empty content result on total failure — never crashes agent loop
+
+[x] Logo optimized (completed 2026-05-21)
+    - Replaced 3.2 MB PNG (1567×1536) with 300-byte SVG
+    - Cuts ~3 MB from the frontend bundle
+
+[x] Postgres to_char() replaced (completed 2026-05-21)
+    - `ZenUsage.year_month` column precomputed on insert
+    - Queries use portable equality instead of Postgres-specific to_char()
+
+[x] tasks_init emits only on change (completed 2026-05-21)
+    - `SharedTaskList._dirty` flag tracks task mutations
+    - Monitor loop only emits `tasks_init` when dirty, then marks clean
+
+[x] git polling reduced from 2s to 5s (completed 2026-05-21)
+    - Removed redundant git_status call from monitor loop
+    - File polling task now runs every 5s instead of 2s
+    - _upload_tokens entries timestamped with time.monotonic()
+    - Token consumed on start_project (popped from dict)
+    - Background task cleans expired tokens + disk dirs every 5 min
+    - UPLOAD_TOKEN_TTL env var configurable (default 3600s = 1 hour)
+    - Opportunistic cleanup on each start_project call
+
+[x] Full Zen model catalog (46 models, 3 tiers) — completed 2026-05-20
+
+[x] BYOK removal — completed 2026-05-20
 
 --------------------------------------------------------------------------------
 TODO — External services not yet configured
@@ -2009,10 +2059,6 @@ TODO — External services not yet configured
 [ ] Initialize git repo in PROJECT_DIR for auto-commit to work
     cd $PROJECT_DIR && git init && git commit --allow-empty -m "init"
     Until done: commits silently fail but runs complete normally
-
-[ ] Add PyJWT and bcrypt to requirements.txt
-    Add: "PyJWT>=2.8.0" and "bcrypt>=4.0.0"
-    Currently must be installed manually after pip install -r backend/requirements.txt
 
 [ ] Full Google login end-to-end test
     1. Backend on port 8000, frontend on port 5173 (not 5174)

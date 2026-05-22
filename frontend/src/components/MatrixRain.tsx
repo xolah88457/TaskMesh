@@ -55,8 +55,18 @@ export default function MatrixRain({ rainColor, rainBg }: Props) {
     }
 
     draw()
+    // Pause animation when the tab is hidden to save battery
+    const onVis = () => {
+      if (document.hidden) {
+        cancelAnimationFrame(animId)
+      } else {
+        animId = requestAnimationFrame(draw)
+      }
+    }
+    document.addEventListener('visibilitychange', onVis)
     return () => {
       cancelAnimationFrame(animId)
+      document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener('resize', resize)
     }
   }, [])

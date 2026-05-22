@@ -49,7 +49,7 @@ export default function LoginPage() {
         setError(data.detail ?? 'Login failed')
         return
       }
-      login(data.token)
+      login()
       navigate('/', { replace: true })
     } catch {
       setError('Network error — is the backend running?')

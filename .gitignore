@@ -65,7 +65,14 @@ agent_output/
 output/
 generated/
 
+# ── Reference repos (not part of TaskMesh) ────────────────────────────────────
+# agent-harness-kit-main is dropped in by the user for reference; never commit.
+agent-harness-kit-main/
+
 # ── Misc ──────────────────────────────────────────────────────────────────────
 .DS_Store
 *.bak
 *.tmp
+
+# ── TaskMesh runtime artifacts ─────────────────────────────────────────────────
+.taskmesh/

@@ -59,7 +59,7 @@ export default function RegisterPage() {
         setError(data.detail ?? 'Registration failed')
         return
       }
-      login(data.token)
+      login()
       navigate('/', { replace: true })
     } catch {
       setError('Network error — is the backend running?')

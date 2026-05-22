@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import MatrixRain from './components/MatrixRain'
+import HealthBanner from './components/HealthBanner'
 import Header from './components/Header'
 import AgentNetwork from './components/AgentNetwork'
 import Sidebar from './components/Sidebar'
@@ -126,6 +127,8 @@ function MainApp() {
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden" style={{ background: 'var(--c-bg)' }}>
       {themeId === 'default' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
+
+      <HealthBanner />
 
       <Header
         project={state.project}

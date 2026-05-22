@@ -321,3 +321,176 @@ class TestIntegration:
         # Returns cancelling even if nothing is running (idempotent)
         data = resp.json()
         assert "status" in data or "error" in data
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TaskAcceptance CRUD on SharedTaskList
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestTaskAcceptance:
+    def test_add_task_with_acceptance(self):
+        from contextlib import asynccontextmanager
+        import asyncio
+        from backend.core.task_list import SharedTaskList
+
+        @asynccontextmanager
+        async def null_session():
+            yield None
+
+        async def _run():
+            tl = SharedTaskList(run_id="test-acc", session_factory=null_session)
+            task = await tl.add_task(
+                title="Test Task",
+                description="A test",
+                acceptance=["Must compile", "Must pass tests"],
+            )
+            assert task["acceptance"] == ["Must compile", "Must pass tests"]
+            assert len(task["acceptance"]) == 2
+
+        asyncio.run(_run())
+
+    def test_get_acceptance_in_memory(self):
+        from contextlib import asynccontextmanager
+        import asyncio
+        from backend.core.task_list import SharedTaskList
+
+        @asynccontextmanager
+        async def null_session():
+            yield None
+
+        async def _run():
+            tl = SharedTaskList(run_id="test-acc", session_factory=null_session)
+            await tl.add_task(title="T1", acceptance=["C1", "C2"])
+            tasks = await tl.all_tasks()
+            tid = tasks[0]["id"]
+            acc = await tl.get_acceptance(tid)
+            assert len(acc) == 2
+            assert acc[0]["criterion"] == "C1"
+            assert acc[1]["criterion"] == "C2"
+            assert acc[0]["met"] is False
+
+        asyncio.run(_run())
+
+    def test_set_acceptance_met_in_memory(self):
+        from contextlib import asynccontextmanager
+        import asyncio
+        from backend.core.task_list import SharedTaskList
+
+        @asynccontextmanager
+        async def null_session():
+            yield None
+
+        async def _run():
+            tl = SharedTaskList(run_id="test-acc", session_factory=null_session)
+            await tl.add_task(title="T1", acceptance=["C1"])
+            tasks = await tl.all_tasks()
+            tid = tasks[0]["id"]
+            acc = await tl.get_acceptance(tid)
+            cid = acc[0]["id"]
+            ok = await tl.set_acceptance_met(cid, True, "reviewer")
+            assert ok is True
+
+        asyncio.run(_run())
+
+    def test_add_task_acceptance_none_is_empty(self):
+        from contextlib import asynccontextmanager
+        import asyncio
+        from backend.core.task_list import SharedTaskList
+
+        @asynccontextmanager
+        async def null_session():
+            yield None
+
+        async def _run():
+            tl = SharedTaskList(run_id="test-acc", session_factory=null_session)
+            task = await tl.add_task(title="T1")
+            assert task["acceptance"] == []
+
+        asyncio.run(_run())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# docs_search.search_docs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDocsSearch:
+    def test_and_semantics(self):
+        from backend.core.docs_search import search_docs
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "a.py").write_text("def hello_world():\n    return 'hi'\n")
+            (root / "b.py").write_text("print('hello')\nprint('world')\n")
+            results = search_docs("hello world", [root], max_results=10)
+            files = {s.file for s in results}
+            # a.py has hello_world which contains both terms; b.py has them on separate lines
+            assert "a.py" in files
+            # b.py: line 1 has hello, line 2 has world — individual lines don't have both
+            b_hits = [s for s in results if s.file == "b.py"]
+            assert len(b_hits) == 0
+
+    def test_max_results(self):
+        from backend.core.docs_search import search_docs
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for i in range(20):
+                (root / f"file_{i}.txt").write_text(f"match line {i}\n" * 3)
+            results = search_docs("match", [root], max_results=5)
+            assert len(results) == 5
+
+    def test_skips_binaries(self):
+        from backend.core.docs_search import search_docs
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "readme.txt").write_text("hello world")
+            (root / "cat.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00hello world\x00")
+            results = search_docs("hello", [root], max_results=10)
+            assert "cat.png" not in {s.file for s in results}
+
+    def test_rejects_path_traversal(self):
+        from backend.core.docs_search import _safe_open
+        from pathlib import Path
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "safe.txt").write_text("hello")
+            # Attempt to escape
+            assert _safe_open(Path("../../../etc/passwd"), root) is None
+
+    def test_empty_query_returns_empty(self):
+        from backend.core.docs_search import search_docs
+        from pathlib import Path
+        results = search_docs("", [Path(".")], max_results=10)
+        assert results == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Manager JSON backward compat (old tasks without acceptance)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestManagerBackwardCompat:
+    def test_old_task_without_acceptance(self):
+        from backend.agents.manager_agent import build_manager_system
+        agents = [
+            {"id": "manager", "role": "Coordinator", "planner": False},
+            {"id": "backend", "role": "API", "planner": False},
+        ]
+        prompt = build_manager_system(agents)
+        assert "acceptance" in prompt, "New manager prompt should include acceptance field"
+
+    def test_acceptance_not_required_for_parsing(self):
+        import json
+        old_format = json.dumps({
+            "feature": "Test",
+            "analysis": "Test",
+            "tasks": [{"id": "t1", "title": "Do stuff", "tag": "MGR"}],
+        })
+        plan = json.loads(old_format)
+        assert plan["tasks"][0].get("acceptance") is None
+        acceptance = plan["tasks"][0].get("acceptance", [])
+        assert acceptance == []

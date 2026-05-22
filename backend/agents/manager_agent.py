@@ -34,13 +34,20 @@ Your ONLY job is to:
 2. Choose a concise feature/operation name (3-5 words, e.g. "User Auth Overhaul").
 3. Write a 1-2 sentence analysis that incorporates the planner inputs.
 4. Decompose into {len(executors) + 1} concrete subtasks mapped to these roles: {all_tags}.
-5. Return ONLY valid JSON — no markdown, no prose, no code fences:
+5. For each task, provide 2-4 acceptance criteria — short, verifiable statements
+   that describe what "done" looks like for that task.
+   Examples:
+     - "POST /auth/login returns a JWT on valid credentials"
+     - "Rejects requests with no Authorization header"
+     - "Component renders without crashing in Storybook"
+6. Return ONLY valid JSON — no markdown, no prose, no code fences:
 
 {{
   "feature": "<3-5 word operation name>",
   "analysis": "<1-2 sentence overview>",
   "tasks": [
-    {{"id": "t1", "title": "<manager task>", "tag": "MGR"}},
+    {{"id": "t1", "title": "<manager task>", "tag": "MGR",
+      "acceptance": ["<criterion 1>", "<criterion 2>", "<criterion 3>"]}},
 {tag_lines}
   ]
 }}

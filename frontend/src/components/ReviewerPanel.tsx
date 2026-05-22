@@ -1,9 +1,10 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import type { ReviewerResult } from '../types'
+import type { ReviewerResult, AcceptanceCriterion } from '../types'
 
 interface Props {
   active: boolean
   result: ReviewerResult | null
+  acceptance?: AcceptanceCriterion[]
 }
 
 const SEVERITY_COLOR: Record<string, string> = {
@@ -13,7 +14,7 @@ const SEVERITY_COLOR: Record<string, string> = {
   Nit:     '#6b7280',
 }
 
-export default function ReviewerPanel({ active, result }: Props) {
+export default function ReviewerPanel({ active, result, acceptance }: Props) {
   if (!active && !result) return null
 
   return (
@@ -42,6 +43,37 @@ export default function ReviewerPanel({ active, result }: Props) {
           </span>
         )}
       </div>
+
+      {/* Acceptance criteria section */}
+      {acceptance && acceptance.length > 0 && (
+        <div className="mb-3 space-y-0.5">
+          <span className="text-[8px] tracking-widest font-mono uppercase" style={{ color: 'var(--c-text-4)' }}>
+            Acceptance Criteria
+          </span>
+          {acceptance.map((criterion) => (
+            <div
+              key={criterion.id}
+              className="text-[9px] font-mono px-2 py-1 rounded flex items-start gap-1.5"
+              style={{ background: 'var(--c-surface-3)' }}
+            >
+              <span
+                className="shrink-0 font-bold"
+                style={{ color: criterion.met ? '#22c55e' : '#ef4444' }}
+              >
+                {criterion.met ? '✓' : '✗'}
+              </span>
+              <div>
+                <span style={{ color: 'var(--c-text-2)' }}>{criterion.criterion}</span>
+                {criterion.note && (
+                  <span className="block" style={{ color: 'var(--c-text-4)' }}>
+                    {criterion.note}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <AnimatePresence>
         {result && (

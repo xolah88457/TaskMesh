@@ -1,5 +1,5 @@
 import { useRef, useCallback, useState } from 'react'
-import logo from '../assets/logo.png'
+import logo from '../assets/logo.svg'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { useAuthContext } from '../context/auth'
