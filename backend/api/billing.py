@@ -3,15 +3,15 @@ Paddle billing integration — Starter + Pro subscriptions and pay-as-you-go pac
 
 Plans
 -----
-  starter  — $30/mo  → $15 credits (1500 cents) allocated each billing cycle
-  pro      — $80/mo  → $40 credits (4000 cents) allocated each billing cycle
+  starter  — $30/mo  → $15 credits (1500 cents, 50% allocation) each billing cycle
+  pro      — $80/mo  → $48 credits (4800 cents, 60% allocation) each billing cycle
   none     — no active subscription (cannot start runs)
 
 Pay-as-you-go packs (one-time, no expiry)
 -----------------------------------------
-  pack_s   — $20 one-time → $10 credits (1000 cents)
-  pack_m   — $50 one-time → $25 credits (2500 cents)
-  pack_l   — $100 one-time → $50 credits (5000 cents)
+  pack_s   — $20 one-time  → $10.00 credits (1000 cents, 50% allocation)
+  pack_m   — $50 one-time  → $27.50 credits (2750 cents, 55% allocation)
+  pack_l   — $100 one-time → $60.00 credits (6000 cents, 60% allocation)
 
 Credit depletion
 ----------------
@@ -64,8 +64,8 @@ PADDLE_PRICE_PACK_L  = os.environ.get("PADDLE_PRICE_PACK_L", "")
 _PADDLE_BASE = "https://api.paddle.com"
 
 # ── Credit constants (cents) ───────────────────────────────────────────────────
-STARTER_CREDITS_CENTS = 1500   # $15 per billing cycle
-PRO_CREDITS_CENTS     = 4000   # $40 per billing cycle
+STARTER_CREDITS_CENTS = 1500   # $15.00 per billing cycle (50% of $30)
+PRO_CREDITS_CENTS     = 4800   # $48.00 per billing cycle (60% of $80)
 
 PACK_CREDITS: dict[str, int] = {}  # populated after env vars are loaded
 
@@ -73,11 +73,11 @@ def _build_pack_credits() -> dict[str, int]:
     """Map Paddle price ID → credits in cents for one-time packs."""
     m: dict[str, int] = {}
     if PADDLE_PRICE_PACK_S:
-        m[PADDLE_PRICE_PACK_S] = 1000   # $10
+        m[PADDLE_PRICE_PACK_S] = 1000   # $10.00 (50%  of $20)
     if PADDLE_PRICE_PACK_M:
-        m[PADDLE_PRICE_PACK_M] = 2500   # $25
+        m[PADDLE_PRICE_PACK_M] = 2750   # $27.50 (55%  of $50)
     if PADDLE_PRICE_PACK_L:
-        m[PADDLE_PRICE_PACK_L] = 5000   # $50
+        m[PADDLE_PRICE_PACK_L] = 6000   # $60.00 (60%  of $100)
     return m
 
 # ── Model pricing table — cents per 1 000 tokens (prompt, completion) ─────────
@@ -191,8 +191,8 @@ _PLAN_PRICE_MAP = {
 # Map of pack name → (price_id_getter, credits_cents)
 _PACK_MAP = {
     "pack_s": (lambda: PADDLE_PRICE_PACK_S, 1000),
-    "pack_m": (lambda: PADDLE_PRICE_PACK_M, 2500),
-    "pack_l": (lambda: PADDLE_PRICE_PACK_L, 5000),
+    "pack_m": (lambda: PADDLE_PRICE_PACK_M, 2750),
+    "pack_l": (lambda: PADDLE_PRICE_PACK_L, 6000),
 }
 
 
@@ -278,7 +278,7 @@ async def get_usage(user: dict = Depends(require_auth)):
 
     # Dev bypass — return a generous fake "pro" balance in local dev mode
     if _AUTH_DISABLED or user_id == "dev-user":
-        return {"plan": "pro", "balance_cents": 4000, "run_count": 0, "run_limit": None}
+        return {"plan": "pro", "balance_cents": 4800, "run_count": 0, "run_limit": None}
 
     async with get_session() as session:
         if session is None:

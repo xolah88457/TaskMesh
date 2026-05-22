@@ -15,6 +15,7 @@ const PLANS = [
     price:          '$30',
     period:         '/mo',
     allocatedCents: 1500,
+    bonusText:      undefined,
     features: [
       'Up to 3 agents per run',
       '$15 API credits / month',
@@ -30,10 +31,11 @@ const PLANS = [
     name:           'Pro',
     price:          '$80',
     period:         '/mo',
-    allocatedCents: 4000,
+    allocatedCents: 4800,
+    bonusText:      '+10% more credits',
     features: [
       'All 9 agents per run',
-      '$40 API credits / month',
+      '$48 API credits / month',
       'All models including flagship',
       'File output to disk',
       'Run history + downloads',
@@ -47,9 +49,9 @@ const PLANS = [
 ] as const
 
 const PACKS = [
-  { id: 'pack_s', label: 'Add $10',  subLabel: '$20 purchase',  cents: 1000 },
-  { id: 'pack_m', label: 'Add $25',  subLabel: '$50 purchase',  cents: 2500 },
-  { id: 'pack_l', label: 'Add $50',  subLabel: '$100 purchase', cents: 5000 },
+  { id: 'pack_s', label: 'Add $10',    subLabel: '$20 purchase',  cents: 1000, bonusText: undefined },
+  { id: 'pack_m', label: 'Add $27.50', subLabel: '$50 purchase',  cents: 2750, bonusText: '+5% more credits' },
+  { id: 'pack_l', label: 'Add $60',    subLabel: '$100 purchase', cents: 6000, bonusText: '+10% more credits' },
 ] as const
 
 function BalanceBar({ balanceCents, allocatedCents }: { balanceCents: number; allocatedCents: number }) {
@@ -227,6 +229,11 @@ export default function BillingPage() {
                     <span className="text-sm font-bold" style={{ color: 'var(--c-text-1)' }}>{plan.name}</span>
                     <span className="text-xl font-bold" style={{ color: 'var(--c-accent)' }}>{plan.price}</span>
                     <span className="text-xs" style={{ color: 'var(--c-text-4)' }}>{plan.period}</span>
+                    {plan.bonusText && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'var(--c-accent-dim)', color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
+                        {plan.bonusText}
+                      </span>
+                    )}
                     {isCurrent && (
                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded ml-auto" style={{ background: 'var(--c-accent)', color: '#000' }}>
                         CURRENT
@@ -278,7 +285,7 @@ export default function BillingPage() {
 
           {/* Credit packs */}
           <h2 className="text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--c-text-3)' }}>Top up credits</h2>
-          <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-4)' }}>One-time purchases · no expiry · 50% goes to API credits</p>
+          <p className="text-[10px] mb-4" style={{ color: 'var(--c-text-4)' }}>One-time purchases · no expiry · up to 60% goes to API credits</p>
           <div className="flex flex-wrap gap-3">
             {PACKS.map(pack => (
               <button
@@ -293,6 +300,11 @@ export default function BillingPage() {
               >
                 <span style={{ color: 'var(--c-accent)', fontSize: 14 }}>{checkingOut === pack.id ? '…' : pack.label}</span>
                 <span className="text-[10px] font-normal mt-0.5" style={{ color: 'var(--c-text-4)' }}>{pack.subLabel}</span>
+                {pack.bonusText && (
+                  <span className="text-[9px] font-bold mt-1 px-1.5 py-0.5 rounded" style={{ background: 'var(--c-accent-dim)', color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
+                    {pack.bonusText}
+                  </span>
+                )}
               </button>
             ))}
           </div>
