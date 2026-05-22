@@ -44,21 +44,17 @@ const ALL_AGENTS: { id: string; name: string; role: string; color: string; requi
 
 // ── Sub-components ──────────────────────────────────────────────────────────────
 
-function CreditWidget({ pct, total }: { pct: number; total: number }) {
-  const used = Math.round(total * (1 - pct / 100))
+function CreditWidget({ balanceCents }: { balanceCents: number }) {
+  const dollars = (balanceCents / 100)
   return (
     <div className="widget">
       <div className="widget-label">
         <span>Credit balance</span>
-        <span className="badge">resets monthly</span>
+        <span className="badge">available</span>
       </div>
-      <div className="widget-big">{pct}<span style={{ fontSize: 16, color: 'var(--text-mute)' }}>%</span></div>
-      <div className="credit-bar">
-        <div className="credit-bar-fill" style={{ width: pct + '%' }} />
-      </div>
+      <div className="widget-big">${dollars.toFixed(0)}</div>
       <div className="credit-meta">
-        <span>{(total - used).toLocaleString()} of {total.toLocaleString()} credits</span>
-        <span style={{ color: 'var(--text-dim)' }}>~{Math.max(1, Math.round((total - used) / 14))} runs left</span>
+        <span>{dollars.toLocaleString()} credits available</span>
       </div>
     </div>
   )
@@ -84,7 +80,7 @@ function ProjectCountWidget({ count, activeCount }: { count: number; activeCount
   )
 }
 
-function TasksWidget({ total }: { total: number }) {
+function TasksWidget({ totalMessages }: { totalMessages: number }) {
   const tasks = [4, 7, 9, 3, 6, 11, 14, 8, 10, 16, 18, 7, 9, 15, 12, 5, 8, 14, 13, 11, 4, 12, 15, 18, 9, 7, 13, 16, 14]
   const max = Math.max(...tasks)
   return (
@@ -93,25 +89,24 @@ function TasksWidget({ total }: { total: number }) {
         <span>Tasks completed</span>
         <span className="badge">May</span>
       </div>
-      <div className="widget-big">{total}</div>
+      <div className="widget-big">{totalMessages}</div>
       <div className="spend-chart">
         {tasks.map((v, i) => (
           <div key={i} className={'bar' + (i === tasks.length - 1 ? ' today' : '')} style={{ height: (v / max * 100) + '%' }} title={`Day ${i + 1}: ${v} tasks`} />
         ))}
       </div>
       <div className="widget-sub" style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <span>day 29 / 31</span>
-        <span style={{ color: 'var(--text-faint)' }}>{total} total</span>
+        <span>total messages</span>
+        <span style={{ color: 'var(--text-faint)' }}>all time</span>
       </div>
     </div>
   )
 }
 
-function QuickActionsWidget({ onAction }: { onAction: (id: string) => void }) {
+function QuickActionsWidget({ onAction, lastProjectName }: { onAction: (id: string) => void; lastProjectName?: string }) {
   const actions = [
-    { id: 'new', label: 'New project', ic: '＋' },
-    { id: 'billing', label: 'Billing & credits', ic: '💳' },
-    { id: 'settings', label: 'Account settings', ic: '⚙' },
+    { id: 'last', label: lastProjectName ? `Last: ${lastProjectName}` : 'Last Project', ic: '↗' },
+    { id: 'duplicate', label: 'Duplicate Last', ic: '⎘' },
   ]
   return (
     <div className="widget">
@@ -411,7 +406,7 @@ function StatusBar({ tab, projectCount, creditPct }: { tab: string; projectCount
       <span className="spacer" />
       <span className="sb-item">tab: {tab}</span>
       <span className="sb-item">{projectCount} projects</span>
-      <span className="sb-item">credits {creditPct}%</span>
+      <span className="sb-item">credits ${(creditPct / 100).toFixed(0)}</span>
       <span className="sb-item" style={{ color: 'var(--text-mute)' }}>⌘K cmds</span>
     </div>
   )
@@ -431,6 +426,7 @@ export default function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
   const [accountOpen, setAccountOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [alertsOpen, setAlertsOpen] = useState(false)
   const [usage, setUsage] = useState<Usage | null>(null)
 
   useEffect(() => {
@@ -492,12 +488,52 @@ export default function Dashboard() {
   }
 
   const handleQuickAction = (id: string) => {
-    if (id === 'new') setTab('create')
-    else if (id === 'billing') navigate('/billing')
-    else if (id === 'settings') navigate('/settings')
+    if (id === 'last') {
+      const last = projects[0]
+      if (last) navigate(`/project/${last.id}`)
+    } else if (id === 'duplicate') {
+      const last = projects[0]
+      if (last) {
+        const dup: Project = {
+          ...last,
+          id: 'p_' + Math.random().toString(36).slice(2, 8),
+          name: last.name + '-copy',
+          status: 'ready',
+          progress: 0,
+          lastActive: 'just now',
+          lastActiveSort: 0,
+          created: 'just now',
+        }
+        setProjects([dup, ...projects])
+        setToast(`duplicated ${last.name}`)
+      }
+    }
   }
 
-  const creditPct = usage ? Math.round((usage.balance_cents / 10000) * 100) : 0
+  const creditPct = usage ? usage.balance_cents : 0
+
+  // Build alerts from running projects
+  const alerts = useMemo(() => {
+    const a: { text: string; time: string; kind: string }[] = []
+    projects.filter(p => p.status === 'running').forEach(p => {
+      a.push({
+        text: `${p.name} · build running`,
+        time: p.lastActive,
+        kind: 'running',
+      })
+    })
+    projects.filter(p => p.status === 'error').forEach(p => {
+      a.push({
+        text: `${p.name} · build failed`,
+        time: p.lastActive,
+        kind: 'error',
+      })
+    })
+    if (a.length === 0) {
+      a.push({ text: 'no active alerts', time: '', kind: 'idle' })
+    }
+    return a
+  }, [projects])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -561,14 +597,39 @@ export default function Dashboard() {
 
         <div className="spacer" />
 
-        {usage && usage.plan !== 'none' && (
-          <button className="iconbtn" title="Credits" onClick={() => navigate('/billing')}>
-            ${(usage.balance_cents / 100).toFixed(0)} credits
+        {/* Alerts dropdown */}
+        <div style={{ position: 'relative' }}>
+          <button className="iconbtn" onClick={() => setAlertsOpen(!alertsOpen)}
+            title="Alerts">
+            ⌖ {alerts.filter(a => a.kind !== 'idle').length || 0} alerts
+          </button>
+          {alertsOpen && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                onClick={() => setAlertsOpen(false)} />
+              <div className="status-menu" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, width: 280, zIndex: 50 }}
+                onClick={e => e.stopPropagation()}>
+                <div className="status-menu-head">alerts</div>
+                {alerts.map((a, i) => (
+                  <div key={i} className="status-menu-row" style={{ cursor: 'default' }}>
+                    <span className={'status-dot ' + a.kind} />
+                    <span style={{ fontSize: 10, color: 'var(--text)' }}>{a.text}</span>
+                    {a.time && <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--text-faint)' }}>{a.time}</span>}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Credits status */}
+        {usage && (
+          <button className="iconbtn" title="Credits" onClick={() => navigate('/billing')}
+            style={{ gap: 4 }}>
+            <span className="status-dot running" style={{ width: 5, height: 5 }} />
+            <span style={{ color: 'var(--text-dim)' }}>credits</span>
           </button>
         )}
-        <button className="iconbtn" title="Billing" onClick={() => navigate('/billing')}>
-          💳 Billing
-        </button>
 
         <div className="account-pop-wrap" style={{ position: 'relative' }}>
           <button className="iconbtn" onClick={() => setAccountOpen(!accountOpen)}
@@ -611,10 +672,10 @@ export default function Dashboard() {
       <div className="main no-rail">
         <div className="canvas">
           <div className="widgets">
-            <CreditWidget pct={creditPct} total={10000} />
+            <CreditWidget balanceCents={usage?.balance_cents ?? 0} />
             <ProjectCountWidget count={projects.length} activeCount={projects.filter(p => p.status === 'running' || p.status === 'ready').length} />
-            <TasksWidget total={283} />
-            <QuickActionsWidget onAction={handleQuickAction} />
+            <TasksWidget totalMessages={283} />
+            <QuickActionsWidget onAction={handleQuickAction} lastProjectName={projects[0]?.name} />
           </div>
 
           {tab === 'create' ? (
