@@ -26,8 +26,29 @@ from anthropic import AsyncAnthropic
 #     )
 # ── End OpenRouter ─────────────────────────────────────────────────────────────
 
-# Thinking budgets disabled — provider-specific extra_body format not supported.
-THINKING_MODEL_IDS: set[str] = set()
+# Models supporting thinking via chat_template_kwargs (OpenAI Chat Completions).
+# Per OpenCode Zen: Kimi, Qwen, MiniMax/MiMo, GLM, and DeepSeek accept
+# chat_template_kwargs: {"enable_thinking": bool} with optional thinking_budget.
+THINKING_MODEL_IDS: set[str] = {
+    # Kimi — chat_template_kwargs + thinking_budget
+    "kimi-k2.5", "kimi-k2.6",
+    # Qwen — chat_template_kwargs only
+    "qwen3.5-plus", "qwen3.6-plus",
+    # MiniMax / MiMo — chat_template_kwargs only
+    "minimax-m2.7", "minimax-m2.5", "minimax-m2.5-free",
+    "mimo-v2.5-pro", "mimo-v2.5",
+    # GLM — chat_template_kwargs only
+    "glm-5", "glm-5.1",
+    # DeepSeek — chat_template_kwargs + thinking_budget
+    "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-free",
+}
+
+# Claude models support thinking via Anthropic Messages API (top-level parameter).
+ANTHROPIC_THINKING_MODEL_IDS: set[str] = {
+    "claude-haiku-4-5",
+    "claude-opus-4-1", "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7",
+    "claude-sonnet-4", "claude-sonnet-4-5", "claude-sonnet-4-6",
+}
 
 # Models that use the Anthropic Messages API (/v1/messages).
 ANTHROPIC_MODEL_IDS: set[str] = {
@@ -98,13 +119,13 @@ class BaseAgent:
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
-            key = self._api_key or os.environ.get("OPENCODE_GO_API_KEY", "no-key-set")
+            key = self._api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY", "no-key-set")
             self._client = AsyncOpenAI(api_key=key, base_url=self._base_url)
         return self._client
 
     def _get_anthropic_client(self) -> AsyncAnthropic:
         if self._anthropic_client is None:
-            key = self._api_key or os.environ.get("OPENCODE_GO_API_KEY", "no-key-set")
+            key = self._api_key or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY", "no-key-set")
             # Anthropic SDK appends /v1/messages to base_url.
             # Strip /v1 suffix so Anthropic's own /v1/messages is used.
             base = self._base_url[:-3] if self._base_url.endswith("/v1") else self._base_url

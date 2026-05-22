@@ -19,11 +19,18 @@ interface AgentCfg {
   system_prompt?: string
 }
 
-// Thinking budgets are not currently supported by OpenCode Zen.
-// THINKING_MODEL_IDS in base_agent.py is an empty set. When switching to
-// OpenRouter (which exposes thinking budgets), populate that set and
-// re-add the ThinkingSlider component to this file.
-// See: base_agent.py — THINKING_MODEL_IDS and ThinkingSlider below.
+// Models that support thinking — matches backend THINKING_MODEL_IDS + ANTHROPIC_THINKING_MODEL_IDS.
+// Slider is disabled for models NOT in this set.
+const THINKING_CAPABLE_MODELS: Set<string> = new Set([
+  'kimi-k2.5','kimi-k2.6',
+  'qwen3.5-plus','qwen3.6-plus',
+  'minimax-m2.7','minimax-m2.5','minimax-m2.5-free',
+  'mimo-v2.5-pro','mimo-v2.5',
+  'glm-5','glm-5.1',
+  'deepseek-v4-pro','deepseek-v4-flash','deepseek-v4-flash-free',
+  'claude-haiku-4-5','claude-opus-4-1','claude-opus-4-5','claude-opus-4-6','claude-opus-4-7',
+  'claude-sonnet-4','claude-sonnet-4-5','claude-sonnet-4-6',
+])
 
 interface AgentPreset {
   id: string
@@ -457,28 +464,28 @@ const KNOWN_MODELS = MODEL_GROUPS.flatMap(g => g.models)
 
 const ICONS = ['👔','🏗','🎨','⚙️','🧪','🔬','📊','🎯','🚀','💡','🔧','📝','🤖','👾','🧠','🦾']
 
-interface Rec { temperature: number; top_p: number; top_k?: number; note?: string }
+interface Rec { temperature: number; top_p: number; top_k?: number; note?: string; thinking_budget?: number }
 
 const MODEL_RECOMMENDATIONS: Record<string, Rec> = {
   // ── DeepSeek ────────────────────────────────────────────────
-  'deepseek-v4-pro':       { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
+  'deepseek-v4-pro':       { temperature: 0.3, top_p: 0.95, thinking_budget: 2048, note: 'API scales internally' },
   'deepseek-v4-flash':     { temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
   'deepseek-v4-flash-free':{ temperature: 0.3, top_p: 0.95, note: 'API scales internally' },
   // ── GLM ─────────────────────────────────────────────────────
-  'glm-5.1':               { temperature: 0.7, top_p: 0.95 },
+  'glm-5.1':               { temperature: 0.7, top_p: 0.95, thinking_budget: 1024 },
   'glm-5':                 { temperature: 0.7, top_p: 0.95 },
   // ── Kimi ────────────────────────────────────────────────────
-  'kimi-k2.6':             { temperature: 0.6, top_p: 0.9 },
-  'kimi-k2.5':             { temperature: 0.6, top_p: 0.9 },
+  'kimi-k2.6':             { temperature: 0.6, top_p: 0.9, thinking_budget: 4096 },
+  'kimi-k2.5':             { temperature: 0.6, top_p: 0.9, thinking_budget: 4096 },
   // ── MiMo ────────────────────────────────────────────────────
-  'mimo-v2.5-pro':         { temperature: 0.7, top_p: 0.95 },
+  'mimo-v2.5-pro':         { temperature: 0.7, top_p: 0.95, thinking_budget: 2048 },
   'mimo-v2.5':             { temperature: 0.7, top_p: 0.95 },
   // ── MiniMax ─────────────────────────────────────────────────
-  'minimax-m2.7':          { temperature: 0.7, top_p: 0.9 },
+  'minimax-m2.7':          { temperature: 0.7, top_p: 0.9, thinking_budget: 4096 },
   'minimax-m2.5':          { temperature: 0.7, top_p: 0.9 },
   'minimax-m2.5-free':     { temperature: 0.7, top_p: 0.9 },
   // ── Qwen ────────────────────────────────────────────────────
-  'qwen3.6-plus':          { temperature: 0.6, top_p: 0.95, top_k: 20 },
+  'qwen3.6-plus':          { temperature: 0.6, top_p: 0.95, top_k: 20, thinking_budget: 1024 },
   'qwen3.5-plus':          { temperature: 0.6, top_p: 0.95, top_k: 20 },
   // ── Nemotron ────────────────────────────────────────────────
   'nemotron-3-super':      { temperature: 0.6, top_p: 0.9 },
@@ -486,14 +493,14 @@ const MODEL_RECOMMENDATIONS: Record<string, Rec> = {
   // ── Big Pickle ──────────────────────────────────────────────
   'big-pickle':            { temperature: 0.7, top_p: 0.95 },
   // ── Claude ──────────────────────────────────────────────────
-  'claude-haiku-4-5':      { temperature: 0.7, top_p: 0.9 },
-  'claude-opus-4-1':       { temperature: 0.7, top_p: 0.9 },
-  'claude-opus-4-5':       { temperature: 0.7, top_p: 0.9 },
-  'claude-opus-4-6':       { temperature: 0.7, top_p: 0.9 },
-  'claude-opus-4-7':       { temperature: 0.7, top_p: 0.9 },
-  'claude-sonnet-4':       { temperature: 0.7, top_p: 0.9 },
-  'claude-sonnet-4-5':     { temperature: 0.7, top_p: 0.9 },
-  'claude-sonnet-4-6':     { temperature: 0.7, top_p: 0.9 },
+  'claude-haiku-4-5':      { temperature: 0.7, top_p: 0.9, thinking_budget: 2048 },
+  'claude-opus-4-1':       { temperature: 0.7, top_p: 0.9, thinking_budget: 8192 },
+  'claude-opus-4-5':       { temperature: 0.7, top_p: 0.9, thinking_budget: 8192 },
+  'claude-opus-4-6':       { temperature: 0.7, top_p: 0.9, thinking_budget: 8192 },
+  'claude-opus-4-7':       { temperature: 0.7, top_p: 0.9, thinking_budget: 8192 },
+  'claude-sonnet-4':       { temperature: 0.7, top_p: 0.9, thinking_budget: 4096 },
+  'claude-sonnet-4-5':     { temperature: 0.7, top_p: 0.9, thinking_budget: 4096 },
+  'claude-sonnet-4-6':     { temperature: 0.7, top_p: 0.9, thinking_budget: 4096 },
   // ── GPT ─────────────────────────────────────────────────────
   'gpt-5':                 { temperature: 0.7, top_p: 1.0 },
   'gpt-5-codex':           { temperature: 0.5, top_p: 0.9 },
@@ -540,20 +547,20 @@ const DEFAULT_CONFIG: Config = {
 }
 
 // Recommended agent-to-model mapping — applied by the "Recommended layout" button.
-const RECOMMENDED_LAYOUT: { roleId: string; model: string; temperature?: number; top_p?: number }[] = [
-  { roleId: 'manager',    model: 'deepseek-v4-pro' },
-  { roleId: 'webdev',     model: 'kimi-k2.6' },
-  { roleId: 'researcher', model: 'kimi-k2.5' },
-  { roleId: 'backend',    model: 'deepseek-v4-flash',   temperature: 0.5, top_p: 0.85 },
-  { roleId: 'frontend',   model: 'mimo-v2.5' },
-  { roleId: 'tester',     model: 'qwen3.5-plus',        temperature: 0.5 },
-  { roleId: 'docs',       model: 'qwen3.5-plus',        temperature: 0.4 },
-  { roleId: 'logger',     model: 'qwen3.5-plus',        temperature: 0.3 },
-  { roleId: 'reviewer',   model: 'deepseek-v4-pro' },
+const RECOMMENDED_LAYOUT: { roleId: string; model: string; temperature?: number; top_p?: number; thinking_budget?: number }[] = [
+  { roleId: 'manager',    model: 'deepseek-v4-pro',                                       thinking_budget: 0 },
+  { roleId: 'webdev',     model: 'kimi-k2.6',                                             thinking_budget: 4096 },
+  { roleId: 'researcher', model: 'kimi-k2.5',                                             thinking_budget: 4096 },
+  { roleId: 'backend',    model: 'deepseek-v4-flash',   temperature: 0.5, top_p: 0.85,    thinking_budget: 0 },
+  { roleId: 'frontend',   model: 'mimo-v2.5',                                             thinking_budget: 0 },
+  { roleId: 'tester',     model: 'qwen3.5-plus',        temperature: 0.5,                 thinking_budget: 1024 },
+  { roleId: 'docs',       model: 'qwen3.5-plus',        temperature: 0.4,                 thinking_budget: 0 },
+  { roleId: 'logger',     model: 'qwen3.5-plus',        temperature: 0.3,                 thinking_budget: 0 },
+  { roleId: 'reviewer',   model: 'deepseek-v4-pro',                                       thinking_budget: 2048 },
 ]
 
-function Slider({ label, value, min, max, step, onChange }: {
-  label: string; value: number; min: number; max: number; step: number
+function Slider({ label, value, min, max, step, disabled, onChange }: {
+  label: string; value: number; min: number; max: number; step: number; disabled?: boolean
   onChange: (v: number) => void
 }) {
   return (
@@ -561,9 +568,10 @@ function Slider({ label, value, min, max, step, onChange }: {
       <span className="text-[10px] font-mono w-12 shrink-0" style={{ color: 'var(--c-text-3)' }}>{label}</span>
       <input
         type="range" min={min} max={max} step={step} value={value}
+        disabled={disabled}
         onChange={e => onChange(parseFloat(e.target.value))}
         className="flex-1 h-1 cursor-pointer"
-        style={{ accentColor: 'var(--c-accent)' }}
+        style={{ accentColor: 'var(--c-accent)', opacity: disabled ? 0.4 : 1 }}
       />
       <span className="text-[10px] font-mono w-8 text-right tabular-nums" style={{ color: 'var(--c-text-2)' }}>{value}</span>
     </div>
@@ -651,6 +659,7 @@ export default function SettingsPanel({ open, onClose, onSaved, themeId, onTheme
     const newAgents = RECOMMENDED_LAYOUT.map(r => defaultAgent(r.roleId as AgentPreset['id'], r.model, {
       ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
       ...(r.top_p !== undefined ? { top_p: r.top_p } : {}),
+      ...(r.thinking_budget !== undefined ? { thinking_budget: r.thinking_budget } : {}),
     }))
     setCfg(c => ({ ...c, agents: newAgents }))
     setShowRecConfirm(false)
@@ -1178,6 +1187,7 @@ function AgentEditor({ agent, isManager, onUpdate, onApplyPreset, onRemove }: Ag
                         onUpdate('temperature', r.temperature)
                         onUpdate('top_p', r.top_p)
                         onUpdate('top_k', r.top_k ?? 0)
+                        onUpdate('thinking_budget', r.thinking_budget ?? 0)
                       }}
                       className="text-[9px] font-mono px-2 py-0.5 rounded flex items-center gap-1"
                       style={{ color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)', background: 'var(--c-accent-dim)' }}
@@ -1198,6 +1208,19 @@ function AgentEditor({ agent, isManager, onUpdate, onApplyPreset, onRemove }: Ag
                   onChange={v => onUpdate('top_k', v)} />
                 {(agent.top_k ?? 0) === 0 && (
                   <p className="text-[9px] font-mono pl-0.5" style={{ color: 'var(--c-text-4)' }}>Top-K = 0 means disabled</p>
+                )}
+                <Slider
+                  label="Think"
+                  value={agent.thinking_budget ?? 0}
+                  min={0} max={16000} step={256}
+                  disabled={!THINKING_CAPABLE_MODELS.has(agent.model)}
+                  onChange={v => onUpdate('thinking_budget', v)}
+                />
+                {(agent.thinking_budget ?? 0) === 0 && THINKING_CAPABLE_MODELS.has(agent.model) && (
+                  <p className="text-[9px] font-mono pl-0.5" style={{ color: 'var(--c-text-4)' }}>0 = no reasoning</p>
+                )}
+                {!THINKING_CAPABLE_MODELS.has(agent.model) && (
+                  <p className="text-[9px] font-mono pl-0.5" style={{ color: 'var(--c-text-4)' }}>This model does not support thinking</p>
                 )}
               </div>
 

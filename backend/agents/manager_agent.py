@@ -67,4 +67,5 @@ class ManagerAgent(BaseAgent):
             temperature=float(mgr.get("temperature", 0.7)),
             top_p=float(mgr.get("top_p", 0.9)),
             max_tokens=int(mgr.get("max_tokens", 8192)),
+            thinking_budget=int(mgr.get("thinking_budget", 0)),
         )

@@ -8,6 +8,7 @@ export interface Agent {
   color: string
   icon: string
   model?: string
+  lastActivity?: number   // timestamp for heartbeat idle detection
 }
 
 export interface AcceptanceCriterion {
@@ -40,6 +41,36 @@ export interface NetMessage {
 }
 
 // ── coordination types ────────────────────────────────────────────────────────
+
+export type StageName = 'idle' | 'research' | 'plan' | 'production' | 'validation'
+
+export interface ResearchReport {
+  agentId: string
+  report: string
+}
+
+export interface PlanReport {
+  agentId: string
+  spec: string
+}
+
+export interface ValidationVerdict {
+  agentId: string
+  approved: boolean
+  summary: string
+  issues: { severity: string; description: string }[]
+  criteria_results?: Record<string, { met: boolean; note?: string }>
+}
+
+export interface ValidationResult {
+  overallApproved: boolean
+  verdicts: ValidationVerdict[]
+}
+
+export interface ReworkNotice {
+  issues: { severity: string; description: string }[]
+  reworkTaskCount: number
+}
 
 export interface ReviewerIssue {
   file: string
@@ -93,10 +124,19 @@ export interface ProjectState {
   running: boolean
   messages: NetMessage[]
   selectedAgentIds: string[] | null
+  // stage tracking
+  currentStage: StageName
+  stageParticipants: string[]
   // coordination state
   reviewerResult: ReviewerResult | null
   reviewerActive: boolean
   coordLog: CoordLogEntry[]
   fileLocks: Record<string, string>   // path -> agentId
   mailbox: MailboxMessage[]
+  // stage artifacts
+  researchReports: ResearchReport[]
+  planReports: PlanReport[]
+  validationVerdicts: ValidationVerdict[]
+  validationResult: ValidationResult | null
+  reworkNotice: ReworkNotice | null
 }

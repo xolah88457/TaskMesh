@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-21 (Phase C — Acceptance, Reviewer, Docs Search shipped)
+Last updated: 2026-05-21 (3-Stage Pipeline + Thinking Budget + Polish — all items shipped)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -142,7 +142,7 @@ MiniMaxClone/                          project root
 
     core/
       __init__.py
-      orchestrator.py                  5-phase pipeline + coordination layer (main file)
+      orchestrator.py                  3-stage pipeline + coordination layer (main file)
       config_loader.py                 Loads agent-team.config.json; defines DEFAULT_AGENTS
       task_list.py                     SharedTaskList — DB-backed task queue with in-memory fallback
       file_upload.py                   File upload validation, storage, text preview
@@ -201,7 +201,7 @@ MiniMaxClone/                          project root
         MatrixRain.tsx                 Animated green rain background (default theme only)
         Sidebar.tsx                    Right panel container: agents + tasks + files + terminal
         SettingsPanel.tsx              Slide-in panel: agent config, models, thinking budget, themes
-        ReviewerPanel.tsx              Phase 4 reviewer status and issue list
+        ReviewerPanel.tsx              Stage 3b validation results and acceptance criteria
         TasksList.tsx                  Task list with completion tracking
         Terminal.tsx                   Terminal output panel (last 30 lines)
 
@@ -315,7 +315,17 @@ BACKEND VARIABLES:
     Tokens expire after this duration; background task cleans every 5 minutes.
 
   OPENROUTER_API_KEY
-    Only needed if you switch to OpenRouter. Not active yet.
+    Used when PROVIDER=openrouter. If set, takes precedence over OPENCODE_GO_API_KEY.
+    Both keys are checked at runtime; the provider determines which one is used.
+
+  PROVIDER
+    Provider toggle: "zen" (default, OpenCode Zen) or "openrouter" (OpenRouter).
+    When set to "openrouter", config_loader.py switches base_url and api_key env var.
+
+  RUN_TIMEOUT_SECONDS
+    Per-run timeout in seconds. Runs exceeding this are cancelled automatically.
+    Default: 600 (10 minutes). Set to 0 to disable timeout.
+    Emits run_timeout Socket.IO event on expiry.
 
 FRONTEND VARIABLES:
 
@@ -475,7 +485,7 @@ TABLE: runs
     id          String(36)   PRIMARY KEY   UUID
     user_id     String(128)  NOT NULL      References users.id (no FK constraint — simpler)
     brief       Text         NOT NULL      The user's original input text
-    status      String(20)   NOT NULL      Values: running | done | cancelled | error
+    status      String(20)   NOT NULL      Values: running | done | cancelled | error | timeout
     agents_used Text         NULLABLE      JSON array of agent IDs selected in Phase 0
     started_at  DateTime(tz) NOT NULL      UTC timestamp (default: now at insert time)
     finished_at DateTime(tz) NULLABLE      Set when run ends (done, cancelled, or error)
@@ -567,7 +577,14 @@ TABLE: task_acceptance (Phase C)
   Purpose: Per-task acceptance criteria evaluated by the reviewer agent.
   Columns: id (int PK), task_id (str), run_id (str, idx), criterion (text), met (bool, default false),
            met_order (int), checked_by, checked_at
-  Notes: Append-only except for met/checked_by/checked_at flip during Phase 4.
+  Notes: Append-only except for met/checked_by/checked_at flip during Stage 3b validation.
+
+TABLE: notifications (Polish)
+  Purpose: Per-user notification preferences. Stub — no email integration yet.
+  Columns: id (int PK), user_id (str), type (subscription_started | credit_low),
+           channel (str, default "email"), enabled (bool, default false), created_at
+  Index: ix_notif_user_type on (user_id, type) — unique
+  Notes: Toggle switches on AccountPage. GET/PUT /api/account/notifications endpoints.
 
 
 ================================================================================
@@ -1060,55 +1077,70 @@ CLIENT-TO-SERVER:
 SECTION 11: MULTI-AGENT PIPELINE — COMPLETE FLOW
 ================================================================================
 
-Entry point: POST /api/start-project creates a per-user Orchestrator, generates a run_id,
+ENTRY POINT: POST /api/start-project creates a per-user Orchestrator, generates a run_id,
 and spawns orchestrator.run(brief, user_id, agent_limit, plan, upload_dir, run_id) via
 asyncio.create_task(). Each user gets their own orchestrator + agents — no queueing.
+Multiple users can run concurrently (dict[user_id, Orchestrator] singleton replaced).
 
-ARCHITECTURE (5-phase dynamic coordination):
-  Phase 1 — Manager creates tasks. The manager agent receives the brief (plus uploaded
-    file context) and produces a JSON task breakdown with acceptance criteria per task.
-    The orchestrator parses this JSON and dispatches each task into a SharedTaskList
-    with status "available". Each criterion is inserted as a task_acceptance row.
-  Phase 2 — Agents self-coordinate. All non-manager, non-reviewer agents are launched
-    concurrently in an agent loop. Each agent: claims an available task from the shared
-    queue → builds a prompt with context (brief, mailbox messages, previously written
-    file summaries) → optionally issues <search>query</search> blocks (capped at 3 rounds)
-    → calls agent.run() → parses FILE blocks from the output → writes
-    files to disk with lock tracking → auto-commits → marks task complete → loops back.
-    Agents exit when all tasks are in terminal states (completed/failed/blocked).
-  Phase 3 — Monitor. The orchestrator polls every 2 seconds: emits file updates, emits
-    task list snapshots, regenerates .taskmesh/current.md crash-recovery snapshot,
-    recovers stale claims (tasks stuck in 'claimed' for >5 min).
-  Phase 4 — Reviewer (NEW in Phase C). After all executors finish, the reviewer agent
-    evaluates the completed output against acceptance criteria. It receives: the brief,
-    task list with criteria, files written list. Returns JSON: {approved, summary, issues,
-    criteria_results: {<criterion_id>: {met, note}}}. Flips task_acceptance.met per result.
-    Emits reviewer_started → reviewer_result Socket.IO events with approved/not flag.
-  Phase 5 — Finalize. Cancels lingering agent loops, persists agents_used, emits final
-    file counts + summary, emits run_done.
+ARCHITECTURE (3-stage pipeline):
+  Stage 1 — Research. The Manager and any planner agents (agents with planner: true)
+    concurrently research the project brief. Each planner produces a research report;
+    the Manager consolidates them into a research summary. Multi-turn follow-up allowed
+    (capped at 2 rounds via AgentMailbox). If no planner agents exist, Manager does
+    solo research. Emits stage_start, research_report, research_complete events.
+  Stage 2 — Plan. All planner agents concurrently produce domain-specific technical
+    specs (architecture, data model, API contracts). Specs are written to
+    .taskmesh/plans/{agent_id}.md. The Manager reads all specs + research summary and
+    produces a JSON task plan with acceptance criteria per task. Tasks are dispatched
+    to SharedTaskList. Multi-turn planning allowed (capped at 2 rounds). Emits
+    stage_start, plan_report, plan_complete events.
+  Stage 3a — Production (Execution). Executor agents (non-manager, non-reviewer,
+    non-planner) run concurrently via SharedTaskList. Each agent: claims a task →
+    builds prompt with context (brief, mailbox, planner specs, file summaries) →
+    optionally issues <search> blocks → runs agent → parses FILE blocks → writes
+    files with lock tracking → auto-commits → marks task complete → loops.
+    Monitor loop polls every 2s: task updates (dirty flag), crash snapshots,
+    stale claim recovery, run timeout check (RUN_TIMEOUT_SECONDS, default 600s).
+  Stage 3b — Validation. Two-tier multi-agent verdict:
+    Tier 1: Reviewer + Researcher concurrently evaluate output against acceptance criteria.
+    Tier 2: Manager casts tiebreaker if Tier 1 disagrees or finds blocker issues.
+    Each agent returns {approved, summary, issues, criteria_results}. If rejected
+    and rework_iteration < 1: Manager creates rework tasks, increments rework counter,
+    loops back to Stage 3a. If approved: flips task_acceptance.met per verdict,
+    writes .taskmesh/validation.json, marks run complete. Emits validation_verdict,
+    validation_complete, rework_needed events.
 
 COORDINATION OBJECTS (reset at start of each run, one per-per-user orchestrator):
-  SharedTaskList: in-memory task queue. Agents call claim_task(), start_task(),
-    complete_task() autonomously. Status flow: pending → available → claimed →
-    in_progress → completed. Persisted to PROJECT_DIR/.taskmesh/tasks-<run_id>.json
-    for crash recovery.
+  SharedTaskList: DB-backed task queue (in-memory fallback when DATABASE_URL unset).
+    Agents call claim_task(), start_task(), complete_task() autonomously.
+    Status flow: pending → available → claimed → in_progress → completed.
+    Persisted to .taskmesh/ for crash recovery. Acceptance criteria stored per task.
   FileLockRegistry: tracks which agent holds exclusive ownership of each file path.
-  AgentMailbox: stores typed messages between agents (in-memory list).
-  CoordinatorLog: structured log of every coordinator decision.
+  AgentMailbox: stores typed messages between agents (in-memory list). Used by
+    Research and Plan stages for multi-turn conversation between Manager and planners.
+  CoordinatorLog: structured log of every coordinator decision. Persisted to DB
+    as coordinator_events table (fire-and-forget).
 
 PLAN-BASED RESTRICTIONS (applied before pipeline runs):
   If plan != "pro", models in PRO_ONLY_MODELS are swapped to STARTER_MODEL_FALLBACK
     before _setup_agents() is called.
   agent_limit=3 for Starter; None for Pro.
-  See Section 15 for PRO_ONLY_MODELS list (26 models) and STARTER_MODEL_FALLBACK.
 
 CREDIT DEDUCTION (fire-and-forget after every agent.run() call):
-  base_agent.run() returns dict: {content, prompt_tokens, completion_tokens, model}
+  base_agent.run() returns dict: {content, thinking_content, prompt_tokens, completion_tokens, model}
   After every agent call: asyncio.create_task(self._deduct_credits(result))
   _deduct_credits() calls billing.calc_cost_cents() and subtracts from UserCredits.balance_cents.
   Also logs a ZenUsage row per call for analytics/spend tracking.
-  If cost <= 0, user_id is "anonymous", or DB unavailable: no-op.
-  Billing failures NEVER block or interrupt a run.
+  Pre-run credit estimate returned in start-project response as credit_warning field.
+
+RUN TIMEOUT:
+  Configurable via RUN_TIMEOUT_SECONDS env var (default 600s = 10 minutes).
+  Monitor loop checks elapsed time; cancels run and emits run_timeout event.
+
+RENAMING NOTE: The old terminology "Phase 1–5" was replaced with "Stage 1–3" in May 2026.
+  Old Phase 1 = Stage 2 (Plan), old Phase 2+3 = Stage 3a (Production),
+  old Phase 4 = Stage 3b (Validation), old Phase 5 = Finalize.
+  The coordinator log still uses event_type "phase_start" for backward compatibility.
 
 FILE WRITING (_write_files_from_parsed):
   Agents output files in the format: --- FILE: path --- / content / --- END FILE ---
@@ -1151,55 +1183,27 @@ Per-agent fields:
   top_p: float        — nucleus sampling
   top_k: int          — top-k sampling (0 = disabled)
   thinking_budget: int — 0 = thinking disabled; >0 = thinking token limit
-  planner: bool       — true = runs in Phase 1 instead of Phase 3
+  planner: bool       — true = runs in Stages 1-2 (research + plan) instead of Stage 3a (execution)
   color: string       — hex color for canvas node
   icon: string        — emoji for canvas node
   system_prompt: string — override system prompt; if empty, uses built-in defaults
 
 SPECIAL ID RULES:
-  id == "manager"    — runs Phase 0 (selection) and Phase 2 (synthesis); excluded from executors
-  id == "reviewer"   — OR role.lower() in {"reviewer", "code reviewer", "code review"}
-                       runs Phase 4 only; excluded from Phase 0 pool and Phase 3 executors
-  planner: true      — runs Phase 1 in parallel with other planners
-  id == "scout"      — OR role.lower() in {"scout", "researcher", "tech lead"}
-                       gets the structured research prompt in Phase 1
+  id == "manager"    — runs Stage 2 (creates task plan); participates in Stage 1 (research)
+                       and Stage 3b (validation tiebreaker). Excluded from executors.
+  id == "reviewer"   — runs Stage 3b (validation) only. Excluded from executors.
+  planner: true      — runs Stages 1-2 (research + plan specs) concurrently with other planners.
+                       Excluded from Stage 3a executors.
 
-DEFAULT AGENTS (from config_loader.py):
-  manager    — Coordinator   — deepseek-v4-pro                        — not planner
-  (No other agents by default — users must add executors via Settings)
-
-  The default agent layout contains only the Manager coordinator.
-  Fresh installs and first-login users see an empty dashboard with no worker agents.
-  Users add agents via:
-    - Settings panel → "+ Add" button
-    - Settings panel → "Recommended layout" button (one-click 9-agent setup)
-    - Sidebar → "+ Add agents" button (opens Settings)
-
-  RECOMMENDED LAYOUT (applied by "Recommended layout" button in Settings):
-  manager    — Coordinator   — deepseek-v4-pro                 — not planner
-  webdev     — Architect     — kimi-k2.6                       — planner=true
-  researcher — Tech Lead     — kimi-k2.5                       — planner=true
-  backend    — API           — deepseek-v4-flash (temp 0.5)    — not planner
-  frontend   — UI/UX         — mimo-v2.5                       — not planner
-  tester     — QA            — qwen3.5-plus (temp 0.5)         — not planner
-  docs       — Writer        — qwen3.5-plus (temp 0.4)         — not planner
-  logger     — Chronicler    — qwen3.5-plus (temp 0.3)         — not planner
-  reviewer   — Code Review   — deepseek-v4-pro                 — Phase 4 only
-
-TASK TAG MAPPING:
-  manager -> "MGR"
-  webdev  -> "WEB"
-  backend -> "BAC"
-  frontend-> "FRO"
-  tester  -> "TES"
-  docs    -> "DOC"
-  logger  -> "LOG"
-  Tags are computed by agent_id.upper()[:3] in the orchestrator.
-
-THINKING BUDGET:
-  Currently disabled (THINKING_MODEL_IDS = empty set in base_agent.py).
-  OpenCode Go does not document supported thinking budget parameters.
-  Will re-enable with confirmed values when switching to OpenRouter.
+THINKING BUDGET (active — 2026-05-21):
+  THINKING_MODEL_IDS: 14 models (Kimi, Qwen, MiMo, GLM, DeepSeek). Uses chat_template_kwargs
+    via extra_body: {"enable_thinking": bool} with optional thinking_budget for Kimi/DeepSeek.
+  ANTHROPIC_THINKING_MODEL_IDS: 8 Claude models. Uses top-level thinking parameter:
+    {"type": "enabled", "budget_tokens": N} in messages.create().
+  When thinking_budget=0 but model is in thinking set: explicitly disables thinking
+    (prevents default-on behavior). When thinking_budget=0 and model not in set: silently skipped.
+  Thinking content extracted separately from Anthropic responses (content blocks of type "thinking").
+  Emitted via thinking_content Socket.IO event. Slider available in SettingsPanel.
 
 BASE_AGENT.RUN() RETURN VALUE:
   run() returns a dict, NOT a bare string:
@@ -1837,7 +1841,7 @@ Check GitHub connection:
 SECTION 24: CURRENT STATUS — WHAT IS DONE AND WHAT REMAINS
 ================================================================================
 
-Last updated: 2026-05-21 (Multi-User Orchestrator + Upload TTL + Docs Sync session)
+Last updated: 2026-05-21 (3-Stage Pipeline + Thinking Budget + Polish — all items complete)
 This section tracks the real-world setup state for this specific deployment.
 Read this section first in a new session to know exactly where to pick up.
 
@@ -2027,21 +2031,44 @@ DONE — Model List Overhaul (2026-05-20)
 
 [x] BYOK removal — completed 2026-05-20
 
+[x] 3-Stage pipeline (completed 2026-05-21)
+    - Stage 1 (Research): Manager + planners research tools/approaches
+    - Stage 2 (Plan): Planners produce specs → Manager creates task plan
+    - Stage 3a (Production): Executors run via SharedTaskList
+    - Stage 3b (Validation): Reviewer+Researcher evaluate → Manager tiebreaker
+    - Rework: 1 iteration on rejection, rework_tasks created via Manager
+    - Planner agents now actually run (were config-only dead weight)
+    - All stage events: stage_start, research_report/complete, plan_report/complete, validation_verdict/complete
+
+[x] LLM thinking budget activated (completed 2026-05-21)
+    - THINKING_MODEL_IDS: 14 models (Kimi, Qwen, MiMo, GLM, DeepSeek) via chat_template_kwargs
+    - ANTHROPIC_THINKING_MODEL_IDS: 8 Claude models via Anthropic thinking parameter
+    - Thinking content extracted separately; emitted via thinking_content Socket.IO event
+    - ThinkingSlider re-added to SettingsPanel with model-aware enable/disable
+    - Max 16000 budget, 256 step. Disabled on non-thinking models (GPT, Gemini, etc.)
+    - Anthropic max_tokens auto-bumps to thinking_budget + 1024 when needed
+
+[x] Medium-priority features (completed 2026-05-21)
+    - Balance low warning: header pill at $2.50 threshold, red at $0.00, polls /api/billing/usage every 60s
+    - Credit estimate: /start-project returns credit_warning when estimated cost exceeds balance
+    - Subscription management: "Manage Subscription" button on AccountPage + BillingPage → Paddle portal
+    - Run timeout: RUN_TIMEOUT_SECONDS env var (600s default), monitor loop checks, run_timeout event
+
+[x] Polish items (completed 2026-05-21)
+    - Notifications stub: notifications table, GET/PUT /api/account/notifications, AccountPage toggles
+    - OpenRouter: toggleable via PROVIDER=openrouter env var, config_loader switches automatically
+    - Mobile layout: sidebar hidden < 1024px, hamburger toggle, header stacks on narrow screens
+    - Theme CSS variables on BillingPage and AccountPage (was hardcoded colors)
+    - Heartbeat: Agent.lastActivity timestamp, detect >30s agent silence
+    - Vercel WebSocket: VITE_SOCKET_URL env var already documented for production
+
+[x] All 22 AUDIT_REMAINING items resolved
+
+[x] ruff: 0 errors · TypeScript: 0 errors · pytest: 66 passed, 3 skipped
+
 --------------------------------------------------------------------------------
 TODO — External services not yet configured
 --------------------------------------------------------------------------------
-
-[ ] GitHub OAuth App (for login — scope: user:email)
-    Create at: GitHub.com -> Settings -> Developer settings -> OAuth Apps -> New OAuth App
-    Callback URL: http://localhost:8000/api/auth/github/callback
-    Set in .env: GITHUB_AUTH_CLIENT_ID, GITHUB_AUTH_CLIENT_SECRET, GITHUB_AUTH_REDIRECT_URI
-    Until done: "Continue with GitHub" returns 503
-
-[ ] GitHub OAuth App (for code push — scope: repo)
-    Can be the same app as login (register both callback URLs)
-    Callback URL: http://localhost:8000/api/github/callback
-    Set in .env: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_REDIRECT_URI
-    Until done: "Push to GitHub" returns 503
 
 [x] BYOK (per-user API keys) removed — system uses single master Zen key (2026-05-20)
     OPENCODE_GO_API_KEY env var is the sole provider key
@@ -2058,27 +2085,22 @@ TODO — External services not yet configured
 
 [ ] Initialize git repo in PROJECT_DIR for auto-commit to work
     cd $PROJECT_DIR && git init && git commit --allow-empty -m "init"
-    Until done: commits silently fail but runs complete normally
 
-[ ] Full Google login end-to-end test
-    1. Backend on port 8000, frontend on port 5173 (not 5174)
-    2. Use Chrome/Firefox (Safari may block HTTP redirects)
-    3. Go to http://localhost:5173 -> should redirect to /login
-    4. Click "Continue with Google" -> Google consent -> /auth/callback -> /
-    5. Header should show your name as a user pill linking to /account
+[ ] OpenCode Zen API key
+    Subscribe at https://opencode.ai/zen → set OPENCODE_GO_API_KEY in .env
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 NOT NEEDED — Confirmed unnecessary
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 [-] Clerk — fully removed. Do not reinstall.
 [-] Free tier — replaced by subscription-only model.
 [-] PADDLE_PRICE_TEAM — old plan removed, replaced by Starter/Pro.
 [-] statement_timeout flag in Cloud SQL — not available, skip it.
-[-] OpenRouter — code written but commented out. OpenCode Zen is active.
 [-] Dollar amounts for balance/usage — replaced by percentage display.
 [-] NVIDIA NIM labels — replaced with "OpenCode Zen" / "OpenCode Zen API Key" throughout.
 [-] PyJWT + bcrypt manual install — now in requirements.txt.
+[-] Old 2-phase pipeline — replaced by 3-stage model.
 
 
 ================================================================================

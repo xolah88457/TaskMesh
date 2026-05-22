@@ -278,7 +278,7 @@ async def get_usage(user: dict = Depends(require_auth)):
 
     # Dev bypass — return a generous fake "pro" balance in local dev mode
     if _AUTH_DISABLED or user_id == "dev-user":
-        return {"plan": "pro", "balance_cents": 4000, "run_count": 0}
+        return {"plan": "pro", "balance_cents": 4000, "run_count": 0, "run_limit": None}
 
     async with get_session() as session:
         if session is None:
@@ -295,6 +295,7 @@ async def get_usage(user: dict = Depends(require_auth)):
         "plan":          plan,
         "balance_cents": balance_cents,
         "run_count":     run_count,
+        "run_limit":     None,   # no run cap for pro/starter (reserved for future)
     }
 
 
@@ -316,6 +317,35 @@ async def admin_bypass(body: AdminBypassRequest, user: dict = Depends(require_au
     user_id = user.get("sub", "")
     await _upsert_credits(user_id=user_id, plan="pro", add_cents=999999)
     return {"status": "ok", "plan": "pro"}
+
+
+@router.get("/portal")
+async def get_portal(user: dict = Depends(require_auth)):
+    """Generate a Paddle customer portal URL for subscription management."""
+    user_id = user.get("sub", "anonymous")
+    if _AUTH_DISABLED or user_id == "dev-user":
+        raise HTTPException(status_code=400, detail="Not available in dev mode")
+
+    from ..db.session import get_session
+    from ..db.models import UserCredits
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="Database not configured")
+        credits = await session.get(UserCredits, user_id)
+        if not credits or not credits.subscription_id:
+            raise HTTPException(status_code=400, detail="No active subscription")
+
+        try:
+            portal_data = await _paddle_post("/customers/portal-sessions", {
+                "subscription_id": credits.subscription_id,
+            })
+            portal_url = portal_data.get("data", {}).get("urls", {}).get("general", {}).get("url")
+            if portal_url:
+                return {"portal_url": portal_url}
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=503, detail="Could not generate portal URL")
 
 
 @router.post("/webhook")

@@ -140,6 +140,7 @@ function MainApp() {
         onStart={startProject}
         onStop={cancelProject}
         onSettings={() => { setSettingsTab('project'); setSettingsOpen(true) }}
+        onToggleSidebar={() => setSidebarWidth(w => w > 0 ? 0 : SIDEBAR_DEFAULT)}
       />
 
       <div className="flex flex-1 overflow-hidden relative z-10 min-h-0">
@@ -147,7 +148,7 @@ function MainApp() {
           <AgentNetwork agents={state.agents} running={state.running} messages={state.messages} selectedAgentIds={state.selectedAgentIds} />
         </div>
 
-        <div className="relative flex shrink-0" style={{ width: sidebarWidth }}>
+        <div className="relative shrink-0 hidden lg:flex" style={{ width: sidebarWidth }}>
           <div
             onMouseDown={onSidebarDragStart}
             className="absolute left-0 top-0 h-full w-1 cursor-col-resize z-10 hover:bg-white/20 active:bg-white/40 transition-colors"
@@ -158,8 +159,13 @@ function MainApp() {
             changedFiles={state.changedFiles}
             changedFileNames={state.changedFileNames}
             terminalLines={state.terminalLines}
+            running={state.running}
+            currentStage={state.currentStage}
             reviewerActive={state.reviewerActive}
             reviewerResult={state.reviewerResult}
+            validationVerdicts={state.validationVerdicts}
+            validationResult={state.validationResult}
+            reworkNotice={state.reworkNotice}
             onAddAgents={() => { setSettingsTab('project'); setSettingsOpen(true) }}
           />
         </div>

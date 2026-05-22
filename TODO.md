@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-21 (Phase C — Acceptance, Reviewer, Docs Search). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-21 (3-Stage Pipeline + Thinking + Polish items). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -151,17 +151,20 @@
 - ✅ Dev bypass: AUTH_DISABLED skips all gates in routes.py and billing.py
 
 ### Multi-Agent Pipeline
-- ✅ 2-phase dynamic coordination: Manager creates tasks → Agents self-coordinate via SharedTaskList
-- ✅ SharedTaskList — in-memory task queue with claim/start/complete workflow + crash persistence
+- ✅ 3-stage pipeline: Research → Plan → Production (with multi-agent validation)
+- ✅ Stage 1 (Research): Manager + Researcher(s) converse to discover tools/libraries/constraints
+- ✅ Stage 2 (Plan): Manager + Planner(s) produce architecture specs → Manager creates task plan
+- ✅ Stage 3a (Production): Executor agents run concurrently via SharedTaskList
+- ✅ Stage 3b (Validation): Multi-agent verdicts (Reviewer + Researcher → Manager tiebreaker) with 1 rework iteration
+- ✅ Agents can search uploaded + generated files via `<search>` blocks (capped 3 rounds)
+- ✅ SharedTaskList — DB-backed task queue with claim/start/complete workflow + crash persistence
 - ✅ FileLockRegistry — exclusive file ownership per agent
 - ✅ AgentMailbox — async cross-agent messaging
 - ✅ CoordinatorLog — structured run log
 - ✅ Agent loop — each agent claims tasks, executes, writes files, auto-commits, loops
 - ✅ File parsing — `--- FILE: path ---` format with regex parsing and path traversal protection
 - ✅ Auto-commit after each task
-- ✅ Selector agent removed — manager creates task plan directly for all available agents
-- ✅ Planner phase removed — all agents self-coordinate without phased planning
-- ✅ Reviewer agent excluded from executor loop (no Phase 4 in current pipeline)
+- ✅ Crash-recovery snapshots — `.taskmesh/current.md` regenerated on every state change
 
 ### Projects Dashboard
 - ✅ Run history list (all past runs for authenticated user)
@@ -185,7 +188,22 @@
 - ✅ **Run resumable detection** — On orchestrator startup, checks DB for stale `running`-status runs. Emits `run_resumable` Socket.IO event if one is found (no auto-resume).
 - ✅ **UI: acceptance criteria in TasksList** — Per-task badge showing `2/3 criteria` with accent color when all met.
 - ✅ **UI: acceptance criteria in ReviewerPanel** — New "Acceptance Criteria" section above the issues list with ✓/✗ per criterion + reviewer note.
-- ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 36 passed / 3 integration skipped
+- ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 47 passed / 3 integration skipped
+
+### 3-Stage Pipeline + Thinking Budget + Polish (2026-05-21)
+- ✅ **3-stage pipeline** — Research → Plan → Production replaces old 2-phase model. Planner agents now actually run in Stages 1-2 (were config-only). Multi-agent validation with rework iteration.
+- ✅ **LLM thinking budget activated** — `THINKING_MODEL_IDS` populated (24 models across 7 families). Chat Completions (`chat_template_kwargs`) + Anthropic (`thinking` parameter) dispatch. ThinkingSlider re-added to SettingsPanel. Thinking content extracted and emitted via Socket.IO.
+- ✅ **Balance low warning** — Header pill when balance drops below $2.50 (polls /api/billing/usage every 60s). Red "⚠ No credits" at $0.00.
+- ✅ **Run-level credit estimate** — `/start-project` returns `credit_warning` when estimated cost exceeds balance. Frontend shows confirm dialog.
+- ✅ **Subscription management** — "Manage Subscription" button on AccountPage + BillingPage opens Paddle customer portal via GET /api/billing/portal.
+- ✅ **Run timeout** — Configurable via `RUN_TIMEOUT_SECONDS` env var (default 600s). Monitor loop cancels on timeout. Emits `run_timeout` Socket.IO event.
+- ✅ **Notifications stub** — `notifications` table, GET/PUT /api/account/notifications endpoints. Toggle switches on AccountPage (subscription_started, credit_low). No email integration.
+- ✅ **OpenRouter activation** — `PROVIDER=openrouter` env var toggles base URL + API key. Both env keys checked at runtime.
+- ✅ **Mobile layout** — Sidebar hidden below 1024px. Hamburger toggle button in Header.
+- ✅ **Theme variables on billing/account pages** — Hardcoded colors replaced with `var(--c-*)` CSS variables.
+- ✅ **Heartbeat indicator** — `Agent.lastActivity` timestamp tracked. Frontend can detect >30s agent silence.
+- ✅ **Vercel WebSocket proxying** — `VITE_SOCKET_URL` env var for direct backend connection (already documented).
+- ✅ ruff clean (0 errors), TypeScript build clean (0 errors), pytest 66 passed / 3 integration skipped
 
 ---
 
@@ -271,35 +289,20 @@ These are improvements to build next when external services are wired up.
   and document any gaps found.
 
 - ⬜ **Paddle webhook local testing setup**
-  Use [Paddle's webhook simulator](https://developer.paddle.com/webhooks/overview) or
-  an ngrok tunnel to test credit allocation locally without a deployed server.
+  Use Paddle's webhook simulator or an ngrok tunnel to test credit allocation locally without a deployed server.
 
-- ⬜ **Balance low warning in the app**
-  BillingPage already shows amber/red credit bar. Consider also showing a banner in the
-  main app header when balance < $1.00 to prompt top-up before credits run out mid-run.
+- ⬜ **Run timeout DB status** — currently timeout sets status to "cancelled" in DB. Add "timeout" to the Run status enum if needed.
 
 ### Medium Priority
-- ⬜ **Run-level credit estimate before starting**
-  Before calling `asyncio.create_task(orchestrator.run(...))`, calculate an estimate of
-  worst-case cost (e.g., 9 agents × avg token use × model rate) and warn user if it would
-  exhaust their balance.
+- ⬜ **Run cost estimate based on actual model pricing**
+  Current credit estimate uses rough $0.01/1K token heuristic. Replace with per-model pricing from `billing.MODEL_PRICING`.
 
-- ⬜ **Subscription management in AccountPage**
-  Currently AccountPage has no link to manage/cancel Paddle subscription.
-  Add a "Manage subscription" link that opens the Paddle billing portal (use
-  `GET /api/billing/portal` → Paddle customer portal URL).
-
-- ⬜ **Run timeout**
-  Long runs can consume a lot of credits unexpectedly. Add a configurable per-run timeout
-  (e.g., 10 minutes) that cancels the run and emits a `run:timeout` Socket.IO event.
+- ⬜ **Pipeline stages visible in ProjectsDashboard**
+  Run history currently shows status + file count. Add stage timeline (research/plan/production split).
 
 ### Low Priority / Nice to Have
-- ⬜ **Email notifications**: send confirmation on subscription start and credit low
-- ⬜ **OpenRouter activation**: code is written and commented out in `base_agent.py` and
-  `config_loader.py`. To activate, set `OPENROUTER_API_KEY` and uncomment the blocks.
-- ⬜ **Mobile layout**: current layout is desktop-only (flex columns, canvas, sidebar)
-- ⬜ **Dark/light theme toggle on /billing and /account pages**
-  These pages use hardcoded styles, not CSS variables. Should adopt the theme system.
+- ⬜ **Email notifications**: wire up actual email sending (SendGrid, Resend, or similar) for subscription_started and credit_low.
+- ⬜ **OpenRouter model ID mapping** — populate OpenRouter-specific model IDs when switching providers.
 
 ---
 

@@ -3,6 +3,7 @@ import { io, Socket } from 'socket.io-client'
 import type {
   ProjectState, Agent, Task, LogEntry, NetMessage,
   ReviewerResult, CoordLogEntry, MailboxMessage, AcceptanceCriterion,
+  StageName, ValidationVerdict,
 } from '../types'
 import { useAuthFetch } from './useAuthFetch'
 
@@ -21,12 +22,21 @@ const INITIAL: ProjectState = {
   running: false,
   messages: [],
   selectedAgentIds: null,
+  // stage tracking
+  currentStage: 'idle',
+  stageParticipants: [],
   // coordination state
   reviewerResult: null,
   reviewerActive: false,
   coordLog: [],
   fileLocks: {},
   mailbox: [],
+  // stage artifacts
+  researchReports: [],
+  planReports: [],
+  validationVerdicts: [],
+  validationResult: null,
+  reworkNotice: null,
 }
 
 type Action =
@@ -45,6 +55,7 @@ type Action =
   | { type: 'TICK' }
   | { type: 'DONE' }
   // coordination actions
+  | { type: 'STAGE_START'; stage: StageName; participants: string[] }
   | { type: 'REVIEWER_STARTED' }
   | { type: 'REVIEWER_RESULT'; result: ReviewerResult }
   | { type: 'REVIEWER_RETRY'; taskIds: string[] }
@@ -53,6 +64,16 @@ type Action =
   | { type: 'FILE_LOCKED'; path: string; agentId: string }
   | { type: 'FILE_UNLOCKED'; path: string }
   | { type: 'MAILBOX_MSG'; msg: MailboxMessage }
+  // stage actions
+  | { type: 'RESEARCH_REPORT'; agentId: string; report: string }
+  | { type: 'PLAN_REPORT'; agentId: string; spec: string }
+  | { type: 'VALIDATION_VERDICT'; agentId: string; approved: boolean;
+      summary: string; issues: { severity: string; description: string }[] }
+  | { type: 'VALIDATION_COMPLETE'; overallApproved: boolean; verdicts: ValidationVerdict[] }
+  | { type: 'REWORK_NEEDED'; issues: { severity: string; description: string }[]; reworkTaskCount: number }
+  | { type: 'THINKING_CONTENT'; agentId: string; content: string }
+  | { type: 'RUN_TIMEOUT'; runId: string; elapsedSeconds: number }
+  | { type: 'AGENT_ACTIVITY'; agentId: string }
 
 function reducer(state: ProjectState, action: Action): ProjectState {
   switch (action.type) {
@@ -121,7 +142,9 @@ function reducer(state: ProjectState, action: Action): ProjectState {
       return {
         ...state,
         agents: state.agents.map(a =>
-          a.id === action.agentId ? { ...a, status: action.status } : a
+          a.id === action.agentId
+            ? { ...a, status: action.status, lastActivity: Date.now() }
+            : a
         ),
       }
 
@@ -134,7 +157,15 @@ function reducer(state: ProjectState, action: Action): ProjectState {
     }
 
     case 'LOG':
-      return { ...state, log: [...state.log, action.entry].slice(-60) }
+      return {
+        ...state,
+        log: [...state.log, action.entry].slice(-60),
+        agents: state.agents.map(a =>
+          a.id === action.entry.agentId
+            ? { ...a, lastActivity: Date.now() }
+            : a
+        ),
+      }
 
     case 'MSG': {
       const now = Date.now()
@@ -202,6 +233,98 @@ function reducer(state: ProjectState, action: Action): ProjectState {
 
     case 'MAILBOX_MSG':
       return { ...state, mailbox: [...state.mailbox, action.msg].slice(-50) }
+
+    // ── stage actions ──────────────────────────────────────────────────────
+
+    case 'STAGE_START':
+      return {
+        ...state,
+        currentStage: action.stage,
+        stageParticipants: action.participants,
+      }
+
+    case 'RESEARCH_REPORT':
+      return {
+        ...state,
+        researchReports: [
+          ...state.researchReports.filter(r => r.agentId !== action.agentId),
+          { agentId: action.agentId, report: action.report },
+        ],
+      }
+
+    case 'PLAN_REPORT':
+      return {
+        ...state,
+        planReports: [
+          ...state.planReports.filter(r => r.agentId !== action.agentId),
+          { agentId: action.agentId, spec: action.spec },
+        ],
+      }
+
+    case 'VALIDATION_VERDICT':
+      return {
+        ...state,
+        validationVerdicts: [
+          ...state.validationVerdicts.filter(v => v.agentId !== action.agentId),
+          {
+            agentId: action.agentId,
+            approved: action.approved,
+            summary: action.summary,
+            issues: action.issues,
+          },
+        ],
+      }
+
+    case 'VALIDATION_COMPLETE':
+      return {
+        ...state,
+        validationResult: {
+          overallApproved: action.overallApproved,
+          verdicts: action.verdicts,
+        },
+      }
+
+    case 'REWORK_NEEDED':
+      return {
+        ...state,
+        reworkNotice: {
+          issues: action.issues,
+          reworkTaskCount: action.reworkTaskCount,
+        },
+        terminalLines: [
+          ...state.terminalLines,
+          `[rework] ${action.issues.length} issue(s) found — ${action.reworkTaskCount} rework tasks created`,
+        ].slice(-30),
+      }
+
+    case 'THINKING_CONTENT':
+      return {
+        ...state,
+        terminalLines: [
+          ...state.terminalLines,
+          `[think·${action.agentId}] ${action.content.slice(0, 120)}`,
+        ].slice(-30),
+      }
+
+    case 'RUN_TIMEOUT':
+      return {
+        ...state,
+        terminalLines: [
+          ...state.terminalLines,
+          `⏱ Run ${action.runId.slice(0, 8)} timed out after ${action.elapsedSeconds}s`,
+        ].slice(-30),
+        running: false,
+      }
+
+    case 'AGENT_ACTIVITY':
+      return {
+        ...state,
+        agents: state.agents.map(a =>
+          a.id === action.agentId
+            ? { ...a, lastActivity: Date.now() }
+            : a
+        ),
+      }
 
     default:
       return state
@@ -285,6 +408,57 @@ export function useSocket() {
     socket.on('mailbox_msg', (msg: MailboxMessage) =>
       dispatch({ type: 'MAILBOX_MSG', msg }))
 
+    // ── stage events ───────────────────────────────────────────────────────
+
+    socket.on('stage_start', ({ stage, participants }: { stage: StageName; participants: string[] }) =>
+      dispatch({ type: 'STAGE_START', stage, participants }))
+
+    socket.on('research_report', ({ agentId, report }: { agentId: string; report: string }) =>
+      dispatch({ type: 'RESEARCH_REPORT', agentId, report }))
+
+    socket.on('research_complete', ({ summary, agentCount }: { summary: string; agentCount: number }) => {
+      dispatch({
+        type: 'TERMINAL',
+        line: `[research] ${agentCount} agent(s) completed research — ${summary.slice(0, 80)}`,
+      })
+    })
+
+    socket.on('plan_report', ({ agentId, spec }: { agentId: string; spec: string }) =>
+      dispatch({ type: 'PLAN_REPORT', agentId, spec }))
+
+    socket.on('plan_complete', ({ feature, taskCount, agentCount }:
+      { feature: string; taskCount: number; agentCount: number }) => {
+      dispatch({
+        type: 'TERMINAL',
+        line: `[plan] ${agentCount} planner(s) created ${taskCount} task(s)${feature ? ` — ${feature}` : ''}`,
+      })
+    })
+
+    socket.on('validation_verdict', (verdict: ValidationVerdict) =>
+      dispatch({
+        type: 'VALIDATION_VERDICT',
+        agentId: verdict.agentId,
+        approved: verdict.approved,
+        summary: verdict.summary,
+        issues: verdict.issues,
+      }))
+
+    socket.on('validation_complete', ({ overallApproved, verdicts }:
+      { overallApproved: boolean; verdicts: ValidationVerdict[] }) =>
+      dispatch({ type: 'VALIDATION_COMPLETE', overallApproved, verdicts }))
+
+    socket.on('rework_needed', ({ issues, reworkTaskCount }:
+      { issues: { severity: string; description: string }[]; reworkTaskCount: number }) =>
+      dispatch({ type: 'REWORK_NEEDED', issues, reworkTaskCount }))
+
+    socket.on('thinking_content', ({ agentId, content }:
+      { agentId: string; content: string }) =>
+      dispatch({ type: 'THINKING_CONTENT', agentId, content }))
+
+    socket.on('run_timeout', ({ run_id, elapsed_seconds }:
+      { run_id: string; elapsed_seconds: number }) =>
+      dispatch({ type: 'RUN_TIMEOUT', runId: run_id, elapsedSeconds: elapsed_seconds }))
+
     return () => { socket.disconnect() }
   }, [])
 
@@ -303,6 +477,10 @@ export function useSocket() {
       .then(r => r.json())
       .then(data => {
         if (data.status === 'started') {
+          if (data.credit_warning) {
+            const proceed = window.confirm(data.credit_warning + '\n\nStart anyway?')
+            if (!proceed) return
+          }
           dispatch({ type: 'START' })
         } else if (data.error === 'run_limit_reached') {
           alert('Monthly run limit reached. Upgrade at /billing to continue.')

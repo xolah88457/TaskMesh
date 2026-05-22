@@ -57,7 +57,7 @@ function BalanceBar({ balanceCents, allocatedCents }: { balanceCents: number; al
   const pct  = allocatedCents > 0 ? Math.min(100, Math.round((balanceCents / allocatedCents) * 100)) : 0
   const low  = pct < 10
   const warn = !low && pct < 25
-  const color = low ? '#ef4444' : warn ? '#f59e0b' : 'var(--c-accent)'
+  const color = low ? 'var(--c-danger, #ef4444)' : warn ? 'var(--c-warning, #f59e0b)' : 'var(--c-accent)'
 
   return (
     <div>
@@ -188,8 +188,8 @@ export default function BillingPage() {
 
           {/* No-plan banner */}
           {!loading && currentPlan === 'none' && (
-            <div className="mb-6 px-4 py-3 rounded border text-xs" style={{ background: 'rgba(234,179,8,0.08)', borderColor: 'rgba(234,179,8,0.3)', color: '#f59e0b' }}>
-              No active plan — choose a plan below to start running agents.
+      <div className="mb-6 px-4 py-3 rounded border text-xs" style={{ background: 'var(--c-surface-2)', borderColor: 'var(--c-warning, #f59e0b30)', color: 'var(--c-warning, #f59e0b)' }}>
+        No active plan — choose a plan below to start running agents.
             </div>
           )}
 
@@ -247,7 +247,21 @@ export default function BillingPage() {
                   {/* CTA */}
                   <div className="px-4 py-3" style={{ background: 'var(--c-surface-1)', borderTop: '1px solid var(--c-border)' }}>
                     {isCurrent ? (
-                      <p className="text-[10px] text-center" style={{ color: 'var(--c-text-4)' }}>Manage via Paddle customer portal</p>
+                      <button
+                        onClick={() => {
+                          authFetch('/api/billing/portal')
+                            .then(r => r.json())
+                            .then((d: { portal_url?: string }) => {
+                              if (d.portal_url) window.open(d.portal_url, '_blank')
+                              else alert('Could not open subscription portal')
+                            })
+                            .catch(() => alert('Could not open subscription portal'))
+                        }}
+                        className="w-full text-xs py-2 rounded transition-colors"
+                        style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)', background: 'var(--c-surface-2)' }}
+                      >
+                        ⚙ Manage Subscription
+                      </button>
                     ) : (
                       <button
                         onClick={() => checkout(plan.id)}

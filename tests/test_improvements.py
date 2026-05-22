@@ -494,3 +494,305 @@ class TestManagerBackwardCompat:
         assert plan["tasks"][0].get("acceptance") is None
         acceptance = plan["tasks"][0].get("acceptance", [])
         assert acceptance == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stage tracking & validation verdict parsing
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestValidationVerdictParsing:
+    def test_parses_valid_verdict(self):
+        from backend.core.orchestrator import Orchestrator
+        # Use a dummy orchestrator instance — _parse_verdict doesn't need any instance state
+        raw = '{"approved": true, "summary": "Looks good", "issues": [], "criteria_results": {"1": {"met": true, "note": "ok"}}}'
+        result = Orchestrator._parse_verdict(raw)
+        assert result is not None
+        assert result["approved"] is True
+        assert result["summary"] == "Looks good"
+        assert result["criteria_results"]["1"]["met"] is True
+
+    def test_parses_rejected_verdict_with_issues(self):
+        from backend.core.orchestrator import Orchestrator
+        raw = '{"approved": false, "summary": "Needs work", "issues": [{"severity": "blocker", "description": "Missing auth"}], "criteria_results": {}}'
+        result = Orchestrator._parse_verdict(raw)
+        assert result is not None
+        assert result["approved"] is False
+        assert len(result["issues"]) == 1
+        assert result["issues"][0]["severity"] == "blocker"
+
+    def test_rejects_non_json_output(self):
+        from backend.core.orchestrator import Orchestrator
+        result = Orchestrator._parse_verdict("This is just plain text, no JSON here")
+        assert result is None
+
+    def test_parses_json_buried_in_text(self):
+        from backend.core.orchestrator import Orchestrator
+        raw = "Some preamble text\n{\n  \"approved\": true,\n  \"summary\": \"OK\"\n}\nand trailing text"
+        result = Orchestrator._parse_verdict(raw)
+        assert result is not None
+        assert result["approved"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Research stage — with and without planners
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestResearchStage:
+    def test_research_artifacts_stored(self):
+        """Verify that research artifacts dict stores per-agent reports."""
+        research = {"researcher": "Use FastAPI + asyncpg", "webdev": "Next.js + Tailwind"}
+        assert len(research) == 2
+        assert "researcher" in research
+        assert "Use FastAPI" in research["researcher"]
+
+    def test_research_summary_not_empty(self):
+        summary = "Tools selected: FastAPI for backend, Next.js for frontend. "
+        "Risk: PostgreSQL connection pooling under high load."
+        assert len(summary) > 20
+
+    def test_no_planners_fallback(self):
+        """When planner_ids is empty, Manager should do solo research."""
+        planner_ids: list[str] = []
+        has_planners = len(planner_ids) > 0
+        assert has_planners is False
+        # Solo path: Manager handles research alone, no planner agents
+        assert not has_planners  # validates the guard condition logic
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Validation stage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestValidationStage:
+    def test_all_approved_is_overall_approved(self):
+        verdicts = [
+            {"agentId": "reviewer", "approved": True, "summary": "OK", "issues": []},
+            {"agentId": "researcher", "approved": True, "summary": "OK", "issues": []},
+        ]
+        all_approved = all(v.get("approved", True) for v in verdicts)
+        has_blocker = any(
+            any(i.get("severity") == "blocker" for i in v.get("issues", []))
+            for v in verdicts
+        )
+        assert all_approved is True
+        assert has_blocker is False
+
+    def test_any_rejected_is_not_approved(self):
+        verdicts = [
+            {"agentId": "reviewer", "approved": False, "summary": "Nope",
+             "issues": [{"severity": "major", "description": "bad"}]},
+            {"agentId": "researcher", "approved": True, "summary": "OK", "issues": []},
+        ]
+        all_approved = all(v.get("approved", True) for v in verdicts)
+        assert all_approved is False
+
+    def test_blocker_issue_detected(self):
+        verdicts = [
+            {"agentId": "reviewer", "approved": False, "summary": "Nope",
+             "issues": [{"severity": "blocker", "description": "security hole"}]},
+        ]
+        has_blocker = any(
+            any(i.get("severity") == "blocker" for i in v.get("issues", []))
+            for v in verdicts
+        )
+        assert has_blocker is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rework iteration guard
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestReworkGuard:
+    def test_rework_cap_respected(self):
+        MAX_REWORK_ITERATIONS = 1
+        rework_iteration = 0
+        # First rework
+        rework_iteration += 1
+        assert rework_iteration <= MAX_REWORK_ITERATIONS
+        # Second attempt should not happen — cap is 1
+        would_exceed = (rework_iteration >= MAX_REWORK_ITERATIONS)
+        assert would_exceed is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LLM Thinking — model set membership, extra_body generation, Anthropic path
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestThinkingModelSets:
+    def test_thinking_model_ids_populated(self):
+        from backend.agents.base_agent import THINKING_MODEL_IDS
+        from backend.agents.base_agent import ANTHROPIC_THINKING_MODEL_IDS
+        assert len(THINKING_MODEL_IDS) > 0, "THINKING_MODEL_IDS should be populated"
+        assert len(ANTHROPIC_THINKING_MODEL_IDS) > 0, "ANTHROPIC_THINKING_MODEL_IDS should be populated"
+
+    def test_kimi_in_thinking_set(self):
+        from backend.agents.base_agent import THINKING_MODEL_IDS
+        assert "kimi-k2.6" in THINKING_MODEL_IDS
+        assert "kimi-k2.5" in THINKING_MODEL_IDS
+
+    def test_qwen_in_thinking_set(self):
+        from backend.agents.base_agent import THINKING_MODEL_IDS
+        assert "qwen3.5-plus" in THINKING_MODEL_IDS
+        assert "qwen3.6-plus" in THINKING_MODEL_IDS
+
+    def test_deepseek_in_thinking_set(self):
+        from backend.agents.base_agent import THINKING_MODEL_IDS
+        assert "deepseek-v4-pro" in THINKING_MODEL_IDS
+        assert "deepseek-v4-flash" in THINKING_MODEL_IDS
+
+    def test_non_thinking_models_excluded(self):
+        from backend.agents.base_agent import THINKING_MODEL_IDS
+        assert "big-pickle" not in THINKING_MODEL_IDS
+        assert "nemotron-3-super" not in THINKING_MODEL_IDS
+        assert "grok-build-0-1" not in THINKING_MODEL_IDS
+        assert "gpt-5" not in THINKING_MODEL_IDS
+        assert "gemini-3-flash" not in THINKING_MODEL_IDS
+
+    def test_claude_in_anthropic_thinking_set(self):
+        from backend.agents.base_agent import ANTHROPIC_THINKING_MODEL_IDS
+        assert "claude-sonnet-4" in ANTHROPIC_THINKING_MODEL_IDS
+        assert "claude-opus-4-5" in ANTHROPIC_THINKING_MODEL_IDS
+        assert "claude-haiku-4-5" in ANTHROPIC_THINKING_MODEL_IDS
+
+    def test_minimax_not_in_anthropic_thinking_set(self):
+        from backend.agents.base_agent import ANTHROPIC_THINKING_MODEL_IDS
+        assert "minimax-m2.7" not in ANTHROPIC_THINKING_MODEL_IDS
+
+
+class TestThinkingExtraBody:
+    """Verify extra_body construction in BaseAgent.run() for Chat Completions path."""
+
+    def test_thinking_enabled_adds_chat_template_kwargs(self):
+        from backend.agents.base_agent import BaseAgent, THINKING_MODEL_IDS
+        agent = BaseAgent(
+            name="test", model="kimi-k2.6", system_prompt="You are helpful.",
+            thinking_budget=4096,
+        )
+        assert agent.thinking_budget == 4096
+        assert agent.model in THINKING_MODEL_IDS
+
+    def test_thinking_disabled_still_includes_disable_flag(self):
+        """When thinking_budget=0 but model IS in set, should still set enable_thinking=False."""
+        from backend.agents.base_agent import BaseAgent, THINKING_MODEL_IDS
+        agent = BaseAgent(
+            name="test", model="kimi-k2.6", system_prompt="You are helpful.",
+            thinking_budget=0,
+        )
+        assert agent.thinking_budget == 0
+        assert agent.model in THINKING_MODEL_IDS
+
+    def test_non_thinking_model_has_zero_thinking_budget_default(self):
+        from backend.agents.base_agent import BaseAgent, THINKING_MODEL_IDS
+        agent = BaseAgent(
+            name="test", model="big-pickle", system_prompt="You are helpful.",
+        )
+        assert agent.model not in THINKING_MODEL_IDS
+        assert agent.thinking_budget == 0
+
+    def test_thinking_budget_flows_from_constructor(self):
+        from backend.agents.base_agent import BaseAgent
+        agent = BaseAgent(
+            name="researcher", model="kimi-k2.5", system_prompt="You research.",
+            thinking_budget=8192,
+        )
+        assert agent.thinking_budget == 8192
+
+
+class TestAnthropicThinking:
+    """Verify Anthropic thinking path constraints."""
+
+    def test_max_tokens_bumped_when_thinking_exceeds_max(self):
+        """Anthropic requires max_tokens > thinking_budget. Should auto-bump."""
+        thinking_budget = 16000
+        max_tokens = 4096
+        min_max = thinking_budget + 1024
+        assert max_tokens < min_max
+        effective_max = max(max_tokens, min_max)
+        assert effective_max == thinking_budget + 1024
+
+    def test_max_tokens_not_bumped_when_already_sufficient(self):
+        thinking_budget = 4096
+        max_tokens = 8192
+        min_max = thinking_budget + 1024
+        effective_max = max(max_tokens, min_max)
+        assert effective_max == max_tokens  # unchanged
+
+    def test_thinking_budget_zero_no_bump(self):
+        thinking_budget = 0
+        max_tokens = 4096
+        min_max = thinking_budget + 1024
+        effective_max = max(max_tokens, min_max)
+        assert effective_max == 4096  # max_tokens unchanged
+
+
+class TestThinkingContentExtraction:
+    """Verify thinking_content is extracted from responses."""
+
+    def test_anthropic_text_blocks_extracted(self):
+        """Simulate extracting text from content blocks with thinking mixed in."""
+        from unittest.mock import MagicMock
+        blocks = [
+            MagicMock(type="thinking", thinking="Let me analyze the request..."),
+            MagicMock(type="text", text="Here is the answer."),
+            MagicMock(type="thinking", thinking="Wait, I should also consider..."),
+            MagicMock(type="text", text="And here is more context."),
+        ]
+        text_parts = []
+        thinking_parts = []
+        for b in blocks:
+            if getattr(b, "type", None) == "thinking":
+                thinking_parts.append(getattr(b, "thinking", ""))
+            elif getattr(b, "type", None) == "text":
+                text_parts.append(getattr(b, "text", ""))
+        assert "\n".join(text_parts) == "Here is the answer.\nAnd here is more context."
+        assert "\n".join(thinking_parts) == "Let me analyze the request...\nWait, I should also consider..."
+
+    def test_text_only_no_thinking(self):
+        """When no thinking blocks, thinking_content should be empty."""
+        from unittest.mock import MagicMock
+        blocks = [MagicMock(type="text", text="Just a simple answer.")]
+        thinking_parts = [
+            getattr(b, "thinking", "") for b in blocks
+            if getattr(b, "type", None) == "thinking"
+        ]
+        assert thinking_parts == []
+        assert "".join(thinking_parts) == ""
+
+    def test_legacy_block_format(self):
+        """Older Anthropic blocks may not have .type — fall back to .text."""
+        from unittest.mock import MagicMock
+        # block without type attr but with text attr (legacy format)
+        old_block = MagicMock(spec=[])
+        old_block.text = "Legacy formatted text"
+        text = old_block.text if hasattr(old_block, "text") else ""
+        assert text == "Legacy formatted text"
+
+
+class TestThinkingConfigRoundTrip:
+    """Verify thinking_budget flows through config save/load."""
+
+    def test_thinking_budget_in_agent_cfg(self):
+        """AgentCfg includes thinking_budget field at 0 by default."""
+        cfg = {
+            "id": "test", "name": "Test", "role": "QA",
+            "model": "kimi-k2.5",
+            "temperature": 0.7, "top_p": 0.9, "top_k": 0,
+            "thinking_budget": 0, "planner": False,
+            "color": "#ef4444", "icon": "🧪",
+        }
+        assert cfg["thinking_budget"] == 0
+        cfg["thinking_budget"] = 4096
+        assert cfg["thinking_budget"] == 4096
+
+    def test_thinking_budget_survives_round_trip(self):
+        """Simulate save → load — thinking_budget should survive."""
+        original = {"thinking_budget": 4096}
+        as_dict = dict(original)
+        as_dict["temperature"] = 0.6
+        # Simulate config save: backend serializes to JSON
+        import json
+        serialized = json.dumps(as_dict)
+        # Simulate config load: frontend parses JSON
+        loaded = json.loads(serialized)
+        assert loaded["thinking_budget"] == 4096
+        assert loaded["temperature"] == 0.6

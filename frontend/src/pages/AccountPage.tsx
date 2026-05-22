@@ -80,6 +80,11 @@ export default function AccountPage() {
   const [zenSummary, setZenSummary]         = useState<ZenSummary | null>(null)
   const [zenLoading, setZenLoading]         = useState(true)
 
+  // Notifications
+  const [notifications, setNotifications]   = useState<Record<string, boolean>>({
+    subscription_started: false, credit_low: false,
+  })
+
   // Delete
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleteMsg, setDeleteMsg]         = useState('')
@@ -99,7 +104,24 @@ export default function AccountPage() {
       .then((d: ZenSummary) => setZenSummary(d))
       .catch(() => {})
       .finally(() => setZenLoading(false))
+    authFetch('/api/account/notifications')
+      .then(r => r.json())
+      .then((d: { notifications: { type: string; enabled: boolean }[] }) => {
+        const map: Record<string, boolean> = {}
+        d.notifications.forEach(n => { map[n.type] = n.enabled })
+        setNotifications(prev => ({ ...prev, ...map }))
+      })
+      .catch(() => {})
   }, [authFetch])
+
+  const toggleNotif = (type: string, enabled: boolean) => {
+    setNotifications(prev => ({ ...prev, [type]: enabled }))
+    authFetch('/api/account/notifications', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, enabled }),
+    }).catch(() => {})
+  }
 
   // ── Save name ──────────────────────────────────────────────────────────────
   const saveName = async (e: FormEvent) => {
@@ -339,6 +361,24 @@ export default function AccountPage() {
                 </div>
               </div>
             ) : null}
+            {/* Manage subscription button */}
+            <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--c-border)' }}>
+              <button
+                onClick={() => {
+                  authFetch('/api/billing/portal')
+                    .then(r => r.json())
+                    .then((d: { portal_url?: string }) => {
+                      if (d.portal_url) window.open(d.portal_url, '_blank')
+                      else alert('Could not open subscription portal')
+                    })
+                    .catch(() => alert('Could not open subscription portal'))
+                }}
+                className="w-full text-xs py-2 rounded transition-colors"
+                style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)', background: 'var(--c-surface-2)' }}
+              >
+                ⚙ Manage Subscription
+              </button>
+            </div>
           </div>
 
           {/* ── Connected accounts ── */}
@@ -386,6 +426,37 @@ export default function AccountPage() {
               >
                 {profile.github_linked ? 'Connected' : 'Not connected'}
               </span>
+            </div>
+          </div>
+
+          {/* ── Notifications ── */}
+          <SectionHeader title="Notifications" />
+          <div className="rounded border px-5 py-4 mb-1" style={cardStyle}>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs" style={{ color: 'var(--c-text-1)' }}>Subscription started</span>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Email when a new subscription activates</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer"
+                    checked={notifications.subscription_started}
+                    onChange={e => toggleNotif('subscription_started', e.target.checked)} />
+                  <div className="w-8 h-4.5 rounded-full peer bg-[var(--c-surface-3)] peer-checked:bg-[var(--c-accent)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:after:translate-x-4" />
+                </label>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs" style={{ color: 'var(--c-text-1)' }}>Credit low</span>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Email when balance drops below $2.50</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer"
+                    checked={notifications.credit_low}
+                    onChange={e => toggleNotif('credit_low', e.target.checked)} />
+                  <div className="w-8 h-4.5 rounded-full peer bg-[var(--c-surface-3)] peer-checked:bg-[var(--c-accent)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:after:translate-x-4" />
+                </label>
+              </div>
             </div>
           </div>
 

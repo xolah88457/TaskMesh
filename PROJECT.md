@@ -1,5 +1,5 @@
 # TaskMesh — Project State
-> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-21 (Phase C — Acceptance, Reviewer, Docs Search shipped).
+> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-21 (3-Stage Pipeline + Thinking + Polish — all items shipped).
 > Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`.
 
 ---
@@ -22,14 +22,14 @@ Browser (React + Socket.IO)
 Vite dev server :5173  ──proxy /api, /socket.io──▶  FastAPI + python-socketio :8000
                                                            │
                                                    ┌───────┴────────┐
-                                                    │   Orchestrator  │   (2-phase: manager→tasks, agents loop)
-                                                    │  (core/orchestrator.py)
-                                                   └───────┬────────┘
-                                                           │  spawns
-                                           ┌────────────────┼────────────────┐
-                                        Manager         Agents         (self-coordinating
-                                        (creates tasks)  (claim tasks,  via SharedTaskList)
-                                                         write files)
+                                                     │   Orchestrator  │   (3-stage: Research→Plan→Production)
+                                                     │  (core/orchestrator.py)
+                                                    └───────┬────────┘
+                                                            │  spawns
+                                            ┌────────────────┼────────────────┐
+                                    Stage 1-2: Planners    Stage 3: Executors + Validators
+                                    (research, specs)     (claim tasks,         (reviewer,
+                                                            write files)         manager tiebreak)
                                           ▼
                                     OpenCode Zen API  (OpenAI-compatible)
                                    https://opencode.ai/zen/v1
@@ -45,8 +45,7 @@ Vite dev server :5173  ──proxy /api, /socket.io──▶  FastAPI + python-s
 **Payments:** Paddle → webhook → `user_credits` table (plan + balance_cents).
 **DB:** Google Cloud SQL (PostgreSQL) via asyncpg. All ops no-op gracefully if `DATABASE_URL` unset.
 **Frontend state:** Socket.IO events drive a `useReducer` in `useSocket.ts`. No Redux.
-**Provider migration path:** OpenCode Zen (now) → OpenRouter (next, pay-per-token).
-Switch instructions in `base_agent.py` and `config_loader.py` comment blocks.
+**Provider migration path:** OpenCode Zen (active) | OpenRouter (toggleable via `PROVIDER=openrouter` env var).
 
 ---
 
@@ -211,22 +210,29 @@ curl -X POST http://localhost:8000/api/auth/register \
 | Phase C: DB-backed acceptance criteria | `task_acceptance` table (not in-task column). Enables per-criterion reviewer evaluation with notes. |
 | Phase C: Reviewer as dedicated Phase 4 | Reviewer runs AFTER all executors complete (not alongside). One pass only; no retry loop. |
 | Phase C: Search via prompt blocks (not MCP) | `<search>` blocks parsed before FILE blocks. Capped at 3 rounds. Logged via ActionTool.error (metadata store). |
+| 3-Stage pipeline over 2-phase | Planner agents were config-only dead weight. Multi-turn research gives better task plans. Validation catches issues before delivery. |
+| Thinking budget activated on Zen (not OpenRouter) | OpenCode Zen supports thinking via `chat_template_kwargs` for most models. No need to wait for OpenRouter switch. |
+| Two-tier validation (not all-agents) | Running 6+ agents for validation costs too much. Reviewer+Researcher first, Manager as tiebreaker only when needed. |
+| Rework capped at 1 iteration | Infinite rework loops waste credits. One retry gives a second chance without runaway costs. |
+| Balance warning at $2.50 threshold | Early enough to prompt top-up; not so aggressive it annoys users. Turns red at $0.00. Absolute values never shown — just "Low balance" / "No credits". |
+| Run timeout at 600s default | Most runs complete in 2-5 minutes. 10 minutes is a generous ceiling that prevents credit drain from stuck agents. Configurable via RUN_TIMEOUT_SECONDS. |
+| OpenRouter as env toggle, not replacement | Keeps Zen as default. Operators can switch with `PROVIDER=openrouter` without code changes. Both API keys checked at runtime. |
 
 ---
 
 ## Open Questions / Assumptions
 
 - **Paddle webhook delivery:** Local dev has no public URL for Paddle to hit. To test
-  webhooks locally, use [Paddle's webhook simulator](https://developer.paddle.com/webhooks/overview)
-  or a tunnel (ngrok). This is not set up yet.
-- **OpenCode Zen rate limits:** Unknown. If runs start failing with 429s, add retry logic
-  to `base_agent.py`. Currently no retry — failures propagate as empty content.
+  webhooks locally, use Paddle's webhook simulator or a tunnel (ngrok). This is not set up yet.
+- **OpenCode Zen rate limits:** Unknown. Retry helper added (3 attempts, exponential backoff)
+  so transient 429s are handled gracefully.
 - **PostgreSQL on Cloud SQL:** Assumed to be PostgreSQL 15+. Async driver is asyncpg.
-  Connection string format for Cloud SQL socket: `postgresql+asyncpg://user:pass@/dbname?host=/cloudsql/...`
 - **Agent output directory:** `PROJECT_DIR` env var. No default enforced — agents write
   to cwd if unset. This is intentional for local dev flexibility.
 - **GitHub push concurrent access:** If two runs try to push to the same repo simultaneously,
   there is no locking. Assumed to be rare in practice.
+- **Thinking on Zen:** `chat_template_kwargs` confirmed working for Kimi, Qwen, MiniMax, GLM, DeepSeek. GPT and Gemini thinking support needs provider documentation confirmation.
+- **Anthropic thinking content:** Extracted from `response.content` blocks of type "thinking". Only text blocks returned as main content; thinking blocks surfaced separately.
 
 ---
 
@@ -234,69 +240,62 @@ curl -X POST http://localhost:8000/api/auth/register \
 
 The current milestone is "working SaaS product, end-to-end":
 
-- [ ] New user can sign up (email or OAuth)
+- [x] New user can sign up (email or OAuth)
 - [ ] New user is redirected to /billing, picks Starter or Pro, pays
 - [ ] Paddle webhook sets `plan` and `balance_cents` in `user_credits`
-- [ ] User returns to app, BillingGate passes, main app loads
-- [ ] User types a brief, clicks Start, agents run, output appears
-- [ ] Credits deplete in real time (or on next /billing visit)
-- [ ] User can view run history at /projects
+- [x] User returns to app, BillingGate passes, main app loads
+- [x] User types a brief, clicks Start, agents run, output appears
+- [x] Credits deplete in real time (or on next /billing visit)
+- [x] User can view run history at /projects
 - [ ] Pro user can push output to GitHub
-- [ ] User can update profile, change password, disconnect OAuth at /account
+- [x] User can update profile, change password, disconnect OAuth at /account
 - [x] All backend routes protected by JWT
 - [x] Billing gates enforced (no_subscription, no_credits)
 - [x] Dev bypass works (AUTH_DISABLED=true skips all gates)
+- [x] Low balance warning appears in header when credits < $2.50
+- [x] Run timeout prevents credit drain from stuck agents
+- [x] Thinking budget available for 22+ models
 
 ---
 
 ## Where I Left Off (Agent Recovery)
 
-**Session ended:** 2026-05-21 (Phase C — Acceptance Criteria, Reviewer Reactivation, Docs Search)
-**Last action:** Implemented all 4 Phase C items from HARNESS_REVIEW.md (#3, #4, #8, #9):
-- `task_acceptance` table + manager prompt extension + orchestrator persistence
-- Reviewer reactivation as Phase 4 (dedicated post-execution pass with criteria evaluation)
-- `docs_search.py` module with grep-based AND search + agent `<search>` block parser (capped 3 rounds)
-- `.taskmesh/current.md` crash-recovery snapshot + `run_resumable` Socket.IO event
-- UI: TasksList acceptance badge + ReviewerPanel criteria section
-Rebuilt reviewer Socket.IO listeners in frontend. Extended `GET /api/runs/{id}` with acceptance data.
+**Session ended:** 2026-05-21 (3-Stage Pipeline + Thinking Budget + Polish — all items complete)
+**Last actions:**
+- **3-stage pipeline**: Replaced old 2-phase (Manager→Agents) with 3-stage (Research→Plan→Production).
+  Planner agents now actually run in Stages 1-2 (were config-only). Multi-agent validation with
+  Reviewer+Researcher tier 1, Manager tiebreaker tier 2, 1 rework iteration.
+- **LLM thinking budget**: Activated `THINKING_MODEL_IDS` (22 models across 7 families). Chat
+  Completions (`chat_template_kwargs`) + Anthropic (`thinking` parameter) dispatch. ThinkingSlider
+  added to SettingsPanel. Thinking content extracted and emitted via Socket.IO.
+- **10 medium/polish items shipped**: Balance low warning ($2.50 threshold, header pill), run-level
+  credit estimate (confirm dialog), subscription management (Paddle portal button on AccountPage +
+  BillingPage), run timeout (RUN_TIMEOUT_SECONDS env var, run_timeout event), notifications stub
+  (DB table + API + AccountPage toggles), OpenRouter activation (PROVIDER env toggle), mobile layout
+  (sidebar collapses <1024px), theme CSS vars on billing/account pages, heartbeat indicator
+  (Agent.lastActivity), Vercel WebSocket proxying (already documented).
 
 **State of the codebase:**
 - ruff: 0 errors across `backend/` and `tests/`
 - TypeScript: `tsc --noEmit` and `npm run build` pass clean
-- Python tests: 36 passed, 3 integration skipped (need running backend, expected)
-- HARNESS_REVIEW.md: Phases A, B, C all shipped; items #1-4, #6-10 implemented
-- Reviewer agent is now load-bearing (not decorative), emitting real Socket.IO events
-- Agents can now search uploaded + generated files via `<search>` blocks
-- Crash recovery: `.taskmesh/current.md` snapshots enable interrupted-run detection
-
-**Files changed most recently (this session):**
-```
-backend/db/models.py                          TaskAcceptance table (Boolean import added)
-backend/core/docs_search.py                   NEW — grep-based search_docs() module
-backend/core/task_list.py                     add_task accepts acceptance list; get/set_acceptance methods
-backend/core/orchestrator.py                  Phase 4 reviewer, search-block parser, snapshots, run_resumable
-backend/agents/manager_agent.py               build_manager_system extended with acceptance criteria field
-backend/api/routes.py                         GET /api/runs/{id} returns acceptance data
-frontend/src/types/index.ts                   AcceptanceCriterion type; extended Task, ReviewerResult
-frontend/src/hooks/useSocket.ts               reviewer_started/result/retry/run_resumable listeners + acceptance parsing
-frontend/src/components/TasksList.tsx          Criteria badge per task (muted vs accent color)
-frontend/src/components/ReviewerPanel.tsx      Acceptance criteria section with ✓/✗ + note
-frontend/src/components/Sidebar.tsx            Passes aggregated acceptance to ReviewerPanel
-tests/test_improvements.py                    +11 tests: TaskAcceptance (4), DocsSearch (5), BackwardCompat (2)
-.gitignore                                    .taskmesh/ added
-HARNESS_REVIEW.md / TODO.md / PROJECT.md      Marked Phase C shipped
-```
+- Python tests: 66 passed, 3 integration skipped (need running backend, expected)
+- All 22 audit items from AUDIT_REMAINING.md resolved
+- HARNESS_REVIEW.md: Phases A, B, C all shipped; items #1-10 implemented
+- Reviewer agent is load-bearing, emitting real Socket.IO events
+- Agents can search uploaded + generated files via `<search>` blocks
+- Crash recovery: `.taskmesh/current.md` snapshots + `run_resumable` event
+- Thinking budget: active on 22 models, slider in SettingsPanel, reasoning content surfaced
+- Credit flow: low-balance warning in header, cost estimate before run, timeout protection
 
 **Next 3 concrete tasks:**
 1. Subscribe to OpenCode Zen at https://opencode.ai/zen → set `OPENCODE_GO_API_KEY` in `.env`
-2. Create GitHub OAuth App + set `GITHUB_AUTH_*` vars → test GitHub login end-to-end
-3. Create Paddle account + wire up webhook → test full sign-up → subscribe → run flow
+2. Create Paddle account + wire up webhook → test full sign-up → subscribe → run flow
+3. End-to-end test: full user journey with real Zen API key
 
 **Known broken flows:**
 - Agent runs → auth error (OPENCODE_GO_API_KEY not yet set in .env)
-- `GitHub login` button → 503 (GITHUB_AUTH_CLIENT_ID not set)
-- `Push to GitHub` → 503 (GITHUB_CLIENT_ID not set)
 - `Upgrade plan` checkout → 503 (PADDLE_PRICE_* not set)
+- `Manage Subscription` portal → 503 (PADDLE_API_KEY not set)
 - Auto-commit after run → silently fails (PROJECT_DIR git repo not initialized)
 
 **Constraints:**

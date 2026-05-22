@@ -40,6 +40,11 @@ _FILE_RE = re.compile(
     re.MULTILINE | re.DOTALL
 )
 
+# ─── pipeline constants ────────────────────────────────────────────────────────
+MAX_RESEARCH_ROUNDS = 2
+MAX_PLAN_ROUNDS = 2
+MAX_REWORK_ITERATIONS = 1
+
 
 # ─── coordination helpers ──────────────────────────────────────────────────────
 
@@ -208,6 +213,18 @@ class Orchestrator:
         self._coord_log    = CoordinatorLog()
         self._task_list: SharedTaskList | None = None
 
+        # pipeline stage tracking
+        self._stage        = "idle"             # research | plan | production | validation
+        self._stage_artifacts: dict[str, dict] = {}  # per-stage data
+
+        # rework loop control
+        self._rework_iteration = 0
+
+        # stage artifacts (populated by stages 1-2)
+        self._research_summary = ""
+        self._research_artifacts: dict[str, str] = {}  # agent_id → report
+        self._plan_artifacts: dict[str, str] = {}       # agent_id → spec
+
         # per-run execution tracking
         self._agent_written_files: dict[str, list[str]] = {}  # agent_id -> [paths]
         self._agent_loops: list[asyncio.Task] = []            # active agent loop tasks
@@ -263,6 +280,16 @@ class Orchestrator:
             "time":    _now(),
             "agentId": agent_id,
             "message": _truncate(message),
+        }, room=self._room)
+
+    async def _emit_thinking(self, agent_id: str, thinking: str) -> None:
+        """Emit thinking/reasoning content from an agent. Fire-and-forget safe."""
+        if not thinking:
+            return
+        await self.sio.emit("thinking_content", {
+            "agentId": agent_id,
+            "time": _now(),
+            "content": thinking[:2000],
         }, room=self._room)
 
     async def _emit_task_done(self, task_id: str) -> None:
@@ -324,7 +351,7 @@ class Orchestrator:
                 return
             tasks = await self._task_list.all_tasks()
             brief = getattr(self, "_current_brief", "")
-            phase = self._get_current_phase()
+            phase = self._stage
             total_files = sum(
                 len(paths) for paths in self._agent_written_files.values()
             )
@@ -357,15 +384,20 @@ class Orchestrator:
         except Exception:
             pass
 
-    def _get_current_phase(self) -> str:
-        """Return the current pipeline phase."""
-        if not self._team_active and self._task_list is None:
-            return "idle"
-        entries = self._coord_log.all()
-        for e in reversed(entries):
-            if e["type"] == "phase_start":
-                return e.get("metadata", {}).get("phase_name", e["content"])
-        return "init"
+    async def _enter_stage(self, stage: str, participants: list[str],
+                            metadata: dict | None = None) -> None:
+        """Transition to a new pipeline stage. Emits stage_start event."""
+        self._stage = stage
+        self._stage_artifacts[stage] = {}
+        await self.sio.emit("stage_start", {
+            "stage": stage,
+            "participants": participants,
+        }, room=self._room)
+        await self._clog("stage_start", f"Stage: {stage}", {
+            "stage": stage,
+            "participants": ",".join(participants),
+            **(metadata or {}),
+        })
 
     async def _check_resumable(self, user_id: str, current_run_id: str) -> None:
         """Check for stale running runs and emit run_resumable. Never raises."""
@@ -394,111 +426,6 @@ class Orchestrator:
         except Exception:
             pass
 
-    async def _run_reviewer_phase(self, brief: str) -> None:
-        """Phase 4: Run the reviewer agent over completed tasks + acceptance criteria."""
-        reviewer_agent = self._agents.get("reviewer")
-        if not reviewer_agent or self._task_list is None:
-            return
-
-        await self.sio.emit("reviewer_started", {}, room=self._room)
-        await self._clog("phase_start", "Phase 4: reviewer evaluating output", {
-            "phase_name": "Phase 4: Reviewer",
-        })
-
-        tasks = await self._task_list.all_tasks()
-        files_written: list[str] = []
-        for aid, paths in self._agent_written_files.items():
-            files_written.extend(paths)
-
-        # Build acceptance criteria section
-        criteria_lines: list[str] = []
-        for t in tasks:
-            acc = await self._task_list.get_acceptance(t["id"])
-            if acc:
-                task_criteria = "\n".join(
-                    f"  [{c['id']}] {c['criterion']}"
-                    for c in acc
-                )
-                criteria_lines.append(
-                    f"Task {t['id']} — {t['title']}:\n{task_criteria}"
-                )
-
-        reviewer_prompt = (
-            f"Project brief: {brief[:500]}\n\n"
-            f"## Completed Tasks\n"
-            f"{self._format_tasks_for_reviewer(tasks)}\n\n"
-            f"## Files Written ({len(files_written)} total)\n"
-            + "\n".join(f"  {f}" for f in files_written[:100]) + "\n\n"
-            "## Acceptance Criteria\n"
-            + ("\n\n".join(criteria_lines) if criteria_lines else "  (none defined)\n") + "\n\n"
-            "You are the Reviewer. Evaluate whether all acceptance criteria are met. "
-            "For each criterion, check: met=true if the delivered code satisfies it, "
-            "met=false if it does not. Add a short note explaining your assessment. "
-            "Return ONLY valid JSON — no markdown, no code fences:\n\n"
-            '{"approved": true/false, "summary": "<1-2 sentences>", '
-            '"issues": [], '
-            '"criteria_results": {"<criterion_id>": {"met": true/false, "note": "<why>"}}}'
-        )
-
-        try:
-            _rev_res = await reviewer_agent.run(reviewer_prompt)
-            asyncio.create_task(self._deduct_credits(_rev_res))
-            asyncio.create_task(self._record_tool_call("reviewer", _rev_res))
-            raw = _rev_res["content"]
-        except Exception:
-            await self._emit_log("reviewer", "Reviewer API call failed")
-            return
-
-        result: dict = {}
-        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if json_match:
-            try:
-                result = json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-
-        approved = result.get("approved", True)
-        summary = result.get("summary", "")
-
-        # Update acceptance criteria
-        criteria_results = result.get("criteria_results", {})
-        for criterion_id, cr in criteria_results.items():
-            if isinstance(cr, dict):
-                await self._task_list.set_acceptance_met(
-                    criterion_id, bool(cr.get("met", False)),
-                    checked_by="reviewer",
-                )
-
-        reviewer_result = {
-            "approved": approved,
-            "summary": summary,
-            "issues": result.get("issues", []) or [],
-        }
-
-        await self.sio.emit("reviewer_result", {"result": reviewer_result}, room=self._room)
-
-        if not approved:
-            await self._emit_log("reviewer", f"Review: NOT APPROVED — {summary[:100]}")
-            await self._clog("reviewer_result", f"Reviewer NOT approved: {summary[:200]}", {
-                "approved": False, "issues": len(reviewer_result["issues"]),
-            })
-        else:
-            await self._emit_log("reviewer", f"Review: APPROVED — {summary[:100]}")
-            await self._clog("reviewer_result", "Reviewer approved output", {
-                "approved": True,
-            })
-
-    def _format_tasks_for_reviewer(self, tasks: list[dict]) -> str:
-        lines: list[str] = []
-        for t in tasks:
-            agent = t.get("assigned_to") or "unassigned"
-            output = ", ".join(t.get("output_files", [])[:5]) or "none"
-            lines.append(
-                f"  [{t['status']}] {t['id']} — {t['title']} "
-                f"(by {agent}, output: {output})"
-            )
-        return "\n".join(lines)
-
     async def _run_search_for_agent(
         self, agent_id: str, query: str
     ) -> str:
@@ -517,6 +444,91 @@ class Orchestrator:
         for s in snippets:
             lines.append(f"  {s.file}:{s.line}  {s.text}")
         return "\n".join(lines)
+
+    async def _run_with_search(
+        self,
+        agent: BaseAgent,
+        prompt: str,
+        agent_id: str,
+        task_id: int | None = None,
+        max_rounds: int = 3,
+    ) -> str:
+        """Run agent, handling <search> blocks with re-prompt. Returns final content."""
+        _SEARCH_RE = re.compile(r'<search>(.+?)</search>', re.DOTALL | re.IGNORECASE)
+
+        _exec_res = await agent.run(prompt)
+        asyncio.create_task(self._deduct_credits(_exec_res))
+        asyncio.create_task(self._record_tool_call(agent_id, _exec_res, task_id=task_id))
+        asyncio.create_task(self._emit_thinking(agent_id, _exec_res.get("thinking_content", "")))
+        result = _exec_res["content"]
+
+        search_rounds = 0
+        while search_rounds < max_rounds:
+            searches = _SEARCH_RE.findall(result)
+            if not searches:
+                break
+            search_rounds += 1
+            search_results: list[str] = []
+            for query in searches:
+                q = query.strip()[:200]
+                if not q:
+                    continue
+                sr = await self._run_search_for_agent(agent_id, q)
+                search_results.append(sr)
+                asyncio.create_task(self._record_tool_call(
+                    agent_id,
+                    {"prompt_tokens": 0, "completion_tokens": 0, "_status": "ok",
+                     "_error": json.dumps({"query": q, "results": sr[:500]}),
+                    },
+                    tool_name="docs.search",
+                    task_id=task_id,
+                ))
+            if not search_results:
+                break
+            enriched = (
+                result.replace("<search>", "[SEARCH RAN] <search>").replace("</search>", "</search> [SEARCH RAN]")
+                + "\n\n[SEARCH RESULTS]\n" + "\n---\n".join(search_results)
+                + "\n[/SEARCH RESULTS]\n\n"
+                "Use the search results above to refine your answer. Do NOT output <search> blocks — "
+                "search has already been completed. Just write the code."
+            )
+            _exec_res = await agent.run(enriched)
+            asyncio.create_task(self._deduct_credits(_exec_res))
+            asyncio.create_task(self._record_tool_call(agent_id, _exec_res, task_id=task_id))
+            result = _exec_res["content"]
+
+        return result
+
+    def _build_upload_manifest_context(self) -> str:
+        """Build upload file manifest string from _upload_dir. Cached per run."""
+        if not getattr(self, "_manifest_cached", False):
+            self._manifest_context = ""
+            upload_dir = getattr(self, "_upload_dir", "")
+            if upload_dir:
+                upload_path = Path(upload_dir)
+                if upload_path.exists():
+                    try:
+                        from ..core.file_upload import build_file_manifest
+                        files_list: list[dict] = []
+                        for f in sorted(upload_path.iterdir()):
+                            if f.is_file():
+                                files_list.append({
+                                    "filename": f.name,
+                                    "size": f.stat().st_size,
+                                    "mime_type": "application/octet-stream",
+                                    "preview": "",
+                                })
+                        manifest = build_file_manifest(files_list)
+                        if manifest:
+                            self._manifest_context = (
+                                "\nThe following files were uploaded for this project. "
+                                "Use them as design reference when creating tasks:\n\n"
+                                f"{manifest}\n"
+                            )
+                    except Exception:
+                        pass
+            self._manifest_cached = True
+        return self._manifest_context
 
     # ── git / subprocess helpers ───────────────────────────────────────────────
 
@@ -811,6 +823,10 @@ class Orchestrator:
         self._team_active = False
         self._cancel_requested = False
         self._current_brief = brief
+        self._stage = "idle"
+        self._stage_artifacts.clear()
+        self._rework_iteration = 0
+        self._manifest_cached = False
 
         # Check for interrupted runs from a prior process
         asyncio.create_task(self._check_resumable(user_id, self._run_id))
@@ -916,33 +932,349 @@ class Orchestrator:
     async def _run_pipeline(self, brief: str, run_id: str = "") -> None:
         await self._emit_terminal("$ agent-team start")
 
-        # Identify non-manager, non-reviewer agents.
-        # Manager is the planner (Phase 1) and reviewer is excluded from the executor
-        # task list by build_manager_system — including either in the execution loop
-        # would spin a no-op worker waiting for tasks that never get created.
+        # Identify agents by role — planners do Stages 1-2, executors do Stage 3.
         _REVIEWER_ROLES = {"reviewer", "code reviewer", "code review"}
-        agent_cfgs = [
-            a for a in self.config.agents
+        all_agents = self.config.agents
+
+        planners = [
+            a for a in all_agents
+            if a.get("planner") and a.get("id") != "manager"
+        ]
+        planner_ids = [str(a["id"]) for a in planners]
+
+        executors = [
+            a for a in all_agents
             if a.get("id") != "manager"
             and a.get("id") != "reviewer"
+            and not a.get("planner", False)
             and a.get("role", "").lower() not in _REVIEWER_ROLES
         ]
-        agent_ids = [str(a["id"]) for a in agent_cfgs if a.get("id")]
+        executor_ids = [str(a["id"]) for a in executors]
 
         # Apply agent limit if set (Starter plan)
         agent_limit = getattr(self, "_agent_limit", None)
-        if agent_limit is not None and len(agent_ids) > agent_limit:
-            agent_ids = agent_ids[:agent_limit]
+        if agent_limit is not None and len(executor_ids) > agent_limit:
+            executor_ids = executor_ids[:agent_limit]
 
-        await self.sio.emit("agents_selected", {"agentIds": agent_ids}, room=self._room)
-        await self._emit_log("manager", f"Team: {', '.join(agent_ids)}.")
+        all_participant_ids = executor_ids + planner_ids
+        if all_participant_ids:
+            await self.sio.emit("agents_selected", {"agentIds": all_participant_ids}, room=self._room)
+            await self._emit_log("manager", f"Team: {', '.join(all_participant_ids)}.")
 
-        # ── Phase 1: Manager creates the task plan ─────────────────────────────
+        manifest = self._build_upload_manifest_context()
+
+        # ═══ Stage 1: Research ════════════════════════════════════════════════
+        await self._enter_stage("research", ["manager"] + planner_ids)
+        await self._run_stage_research(brief, planners, planner_ids, manifest)
+
+        # ═══ Stage 2: Plan ════════════════════════════════════════════════════
+        await self._enter_stage("plan", ["manager"] + planner_ids)
+        await self._run_stage_plan(brief, planners, planner_ids, executor_ids, manifest)
+
+        # ═══ Stage 3: Production + Validation ═════════════════════════════════
+        approved = False
+        while True:
+            await self._enter_stage("production", executor_ids,
+                                     metadata={"rework": str(self._rework_iteration)})
+            await self._run_stage_production(brief, run_id, executor_ids)
+            if self._cancel_requested:
+                break
+
+            await self._enter_stage("validation", ["manager", "reviewer"] + planner_ids)
+            approved = await self._run_stage_validation(brief)
+            if approved or self._rework_iteration >= MAX_REWORK_ITERATIONS:
+                break
+            self._rework_iteration += 1
+
+        # ═══ Finalize ═════════════════════════════════════════════════════════
+        for t in self._agent_loops:
+            if not t.done():
+                t.cancel()
+
+        async with get_session() as session:
+            if session is not None:
+                run_row = await session.get(Run, run_id)
+                if run_row is not None:
+                    run_row.agents_used = json.dumps(executor_ids)
+
+        count, files = await self._git_status()
+        await self._emit_files(count, files)
+
+        summary = await self._task_list.summary()
+        await self._emit_log("manager", f"Run complete — {summary}")
+        await self._clog("run_complete", f"Task summary: {summary}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Stage 1: Research
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _run_stage_research(
+        self, brief: str, planners: list[dict],
+        planner_ids: list[str], manifest: str,
+    ) -> None:
         await self._emit_agent("manager", "thinking")
-        await self._emit_log("manager", "Analyzing brief and creating task plan…")
-        await self._clog("phase_start", "Phase 1: manager creating task plan", {"brief": brief[:120]})
+        await self._emit_log("manager", "Stage 1: Research — analyzing requirements…")
 
-        # Build the manager prompt with agent roster + upload context
+        # No planner agents → Manager does solo research
+        if not planner_ids:
+            research_prompt = (
+                f"Project brief: {brief}\n\n"
+                f"{manifest}\n"
+                "You are in the Research stage. Analyze the brief and identify:\n"
+                "1. Required tools, libraries, and frameworks\n"
+                "2. Key architectural decisions and constraints\n"
+                "3. Potential risks and edge cases\n\n"
+                "Produce a structured research report. Use plain text, not JSON."
+            )
+            _res = await self.manager.run(research_prompt)
+            asyncio.create_task(self._deduct_credits(_res))
+            asyncio.create_task(self._record_tool_call("manager", _res))
+            self._research_summary = _res["content"]
+            await self._emit_log("manager", "Research complete (solo)")
+            await self.sio.emit("research_complete", {
+                "summary": self._research_summary[:500],
+                "artifacts": {"manager": self._research_summary[:200]},
+            }, room=self._room)
+            return
+
+        # Concurrent planner research
+        async def _run_planner_research(agent_id: str) -> tuple[str, str]:
+            agent = self._agents.get(agent_id)
+            if not agent:
+                return agent_id, ""
+            agent_cfg = next((a for a in self.config.agents if a.get("id") == agent_id), {})
+            role = agent_cfg.get("role", agent_id)
+            prompt = (
+                f"Project brief: {brief}\n\n"
+                f"{manifest}\n"
+                f"Your role: {role}\n\n"
+                "You are in the Research stage. Research this project and identify:\n"
+                f"- Tools, libraries, and frameworks relevant to your role ({role})\n"
+                "- Key architectural decisions\n"
+                "- Constraints and risks\n\n"
+                "Use <search> blocks to search the existing codebase or uploaded files "
+                "for relevant context. Produce a structured report. Plain text, not JSON."
+            )
+            try:
+                result = await self._run_with_search(agent, prompt, agent_id)
+            except Exception:
+                result = ""
+            self._research_artifacts[agent_id] = result
+            await self.sio.emit("research_report", {
+                "agentId": agent_id,
+                "report": result[:500],
+            }, room=self._room)
+            return agent_id, result
+
+        tasks = [asyncio.create_task(_run_planner_research(aid)) for aid in planner_ids]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Manager summary round
+        research_context = "\n\n".join(
+            f"=== {aid} Research Report ===\n{text}"
+            for aid, text in self._research_artifacts.items()
+            if text
+        )
+        summary_prompt = (
+            f"Project brief: {brief}\n\n"
+            "Below are research reports from specialized agents. "
+            "Consolidate them into a single research summary:\n\n"
+            f"{research_context}\n\n"
+            "Produce a consolidated research summary covering:\n"
+            "1. Tools/technologies to use\n"
+            "2. Key constraints\n"
+            "3. Risks flagged\n"
+            "Plain text, not JSON."
+        )
+        _res = await self.manager.run(summary_prompt)
+        asyncio.create_task(self._deduct_credits(_res))
+        asyncio.create_task(self._record_tool_call("manager", _res))
+        self._research_summary = _res["content"]
+
+        # Multi-turn follow-up (capped at MAX_RESEARCH_ROUNDS)
+        for _round in range(MAX_RESEARCH_ROUNDS):
+            follow_prompt = (
+                f"Research summary so far:\n{self._research_summary}\n\n"
+                "Based on the research above, is anything unclear or missing? "
+                "If yes, write exactly ONE question per planner agent prefixed with "
+                "the agent ID like 'Q researcher: ...' or 'Q webdev: ...'. "
+                "If no questions remain, respond with just 'DONE'."
+            )
+            _res = await self.manager.run(follow_prompt)
+            asyncio.create_task(self._deduct_credits(_res))
+            content = _res["content"]
+            if content.strip().upper().startswith("DONE"):
+                break
+            questions = re.findall(r'Q\s+(\w+)\s*:\s*(.+)', content)
+            if not questions:
+                break
+            for target_id, question in questions:
+                agent = self._agents.get(target_id)
+                if not agent:
+                    continue
+                try:
+                    ans = await self._run_with_search(
+                        agent,
+                        f"Project brief: {brief}\n\n"
+                        f"The Manager asked you this question:\n{question.strip()}\n\n"
+                        "Answer concisely. Use <search> if needed.",
+                        target_id,
+                    )
+                except Exception:
+                    ans = f"(unable to answer: {question})"
+                # Feed response back to Manager for updated summary
+                update_prompt = (
+                    f"Previous research summary:\n{self._research_summary}\n\n"
+                    f"{target_id} responded to your question '{question.strip()}':\n{ans}\n\n"
+                    "Update the consolidated research summary incorporating this new information."
+                )
+                _upd = await self.manager.run(update_prompt)
+                asyncio.create_task(self._deduct_credits(_upd))
+                self._research_summary = _upd["content"]
+
+        await self._emit_agent("manager", "done")
+        await self._emit_log("manager", "Research complete")
+        await self.sio.emit("research_complete", {
+            "summary": self._research_summary[:500],
+            "agentCount": len(planner_ids),
+        }, room=self._room)
+        await self._clog("stage_complete", "Stage 1: Research complete")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Stage 2: Plan
+    # ══════════════════════════════════════════════════════════════════════════
+
+    async def _run_stage_plan(
+        self, brief: str, planners: list[dict],
+        planner_ids: list[str], executor_ids: list[str], manifest: str,
+    ) -> None:
+        await self._emit_agent("manager", "thinking")
+        await self._emit_log("manager", "Stage 2: Plan — creating architecture…")
+
+        # No planner agents → Manager does solo plan (existing Phase 1 logic)
+        if not planner_ids:
+            await self._manager_create_task_plan(
+                brief, executor_ids, manifest,
+                extra_context=self._research_summary or "",
+            )
+            await self._emit_agent("manager", "done")
+            await self._emit_log("manager", "Plan complete (solo)")
+            await self.sio.emit("plan_complete", {
+                "feature": "",
+                "taskCount": len(await self._task_list.all_tasks()),
+                "agentCount": 0,
+            }, room=self._room)
+            await self._clog("stage_complete", "Stage 2: Plan complete (solo)")
+            return
+
+        # Concurrent planner specs
+        async def _run_planner_spec(agent_id: str) -> tuple[str, str]:
+            agent = self._agents.get(agent_id)
+            if not agent:
+                return agent_id, ""
+            agent_cfg = next((a for a in self.config.agents if a.get("id") == agent_id), {})
+            role = agent_cfg.get("role", agent_id)
+            prompt = (
+                f"Project brief: {brief}\n\n"
+                f"{manifest}\n"
+                f"Your role: {role}\n\n"
+                f"Research summary:\n{self._research_summary}\n\n"
+                "You are in the Plan stage. Produce a detailed technical specification "
+                f"for your domain ({role}). Include:\n"
+                "- Architecture decisions\n"
+                "- Component/module layout\n"
+                "- Data models / API contracts / UI component hierarchy (based on role)\n"
+                "- Implementation order\n\n"
+                "Use <search> blocks to reference the existing codebase if relevant. "
+                "Output as plain text, not JSON."
+            )
+            try:
+                spec = await self._run_with_search(agent, prompt, agent_id)
+            except Exception:
+                spec = ""
+            self._plan_artifacts[agent_id] = spec
+            # Write spec to disk
+            try:
+                plans_dir = self._cwd / ".taskmesh" / "plans"
+                plans_dir.mkdir(parents=True, exist_ok=True)
+                (plans_dir / f"{agent_id}.md").write_text(spec, encoding="utf-8")
+            except Exception:
+                pass
+            await self.sio.emit("plan_report", {
+                "agentId": agent_id,
+                "spec": spec[:500],
+            }, room=self._room)
+            return agent_id, spec
+
+        spec_tasks = [asyncio.create_task(_run_planner_spec(aid)) for aid in planner_ids]
+        await asyncio.gather(*spec_tasks, return_exceptions=True)
+
+        # Manager creates task plan from enriched context
+        plan_context = "\n\n".join(
+            f"=== {aid} Technical Spec ===\n{text}"
+            for aid, text in self._plan_artifacts.items()
+            if text
+        )
+        extra = f"{self._research_summary}\n\n{plan_context}"
+        await self._manager_create_task_plan(brief, executor_ids, manifest, extra_context=extra)
+
+        # Multi-turn planning (capped at MAX_PLAN_ROUNDS)
+        for _round in range(MAX_PLAN_ROUNDS):
+            tasks = await self._task_list.all_tasks()
+            task_list_str = "\n".join(
+                f"  [{t['status']}] {t['id']} — {t['title']}" for t in tasks
+            )
+            follow_prompt = (
+                f"Task plan:\n{task_list_str}\n\n"
+                "Review the task plan above. Are any tasks unclear, missing, or overlapping? "
+                "If yes, write ONE question per planner agent prefixed with "
+                "'Q {agent_id}: ...'. "
+                "If the plan looks complete, respond with just 'DONE'."
+            )
+            _res = await self.manager.run(follow_prompt)
+            asyncio.create_task(self._deduct_credits(_res))
+            content = _res["content"]
+            if content.strip().upper().startswith("DONE"):
+                break
+            questions = re.findall(r'Q\s+(\w+)\s*:\s*(.+)', content)
+            if not questions:
+                break
+            for target_id, question in questions:
+                agent = self._agents.get(target_id)
+                if not agent:
+                    continue
+                try:
+                    ans = await self._run_with_search(
+                        agent,
+                        f"Project brief: {brief}\n\n"
+                        f"Manager question about the plan:\n{question.strip()}\n\n"
+                        "Answer concisely.",
+                        target_id,
+                    )
+                except Exception:
+                    ans = f"(unable to answer: {question})"
+                extra = f"{extra}\n\n{target_id} clarification: {ans}"
+            # Re-create tasks with updated context
+            await self._manager_create_task_plan(
+                brief, executor_ids, manifest, extra_context=extra,
+            )
+
+        await self._emit_agent("manager", "done")
+        task_count = len(await self._task_list.all_tasks())
+        await self._emit_log("manager", f"Plan complete — {task_count} tasks")
+        self._task_list.save_to_disk(run_id=self._run_id, cwd=self._cwd)
+        await self.sio.emit("plan_complete", {
+            "feature": "",
+            "taskCount": task_count,
+            "agentCount": len(planner_ids),
+        }, room=self._room)
+        await self._clog("stage_complete", "Stage 2: Plan complete")
+
+    async def _manager_create_task_plan(
+        self, brief: str, executor_ids: list[str],
+        manifest: str, extra_context: str = "",
+    ) -> None:
+        """Run the Manager to produce a task plan and dispatch to SharedTaskList."""
         agent_roster = "\n".join(
             f'- {a.get("id", "?")}: {a.get("role", a.get("id", "?"))}'
             for a in self.config.agents
@@ -951,35 +1283,16 @@ class Orchestrator:
         manager_prompt = (
             f"Project brief: {brief}\n\n"
             f"Available agents:\n{agent_roster}\n\n"
+            f"{manifest}\n"
         )
-        if hasattr(self, "_upload_dir") and self._upload_dir:
-            upload_path = Path(self._upload_dir)
-            if upload_path.exists():
-                try:
-                    from ..core.file_upload import build_file_manifest
-                    files_list: list[dict] = []
-                    for f in sorted(upload_path.iterdir()):
-                        if f.is_file():
-                            files_list.append({
-                                "filename": f.name,
-                                "size": f.stat().st_size,
-                                "mime_type": "application/octet-stream",
-                                "preview": "",
-                            })
-                    manifest = build_file_manifest(files_list)
-                    if manifest:
-                        manager_prompt += (
-                            f"\nThe following files were uploaded for this project. "
-                            f"Use them as design reference when creating tasks:\n\n{manifest}\n\n"
-                        )
-                except Exception:
-                    pass
-
+        if extra_context:
+            manager_prompt += f"\nAdditional context:\n{extra_context}\n\n"
         manager_prompt += (
             "Create a task breakdown for the agents to execute. "
             "Return ONLY valid JSON — no markdown, no code fences:\n"
             '{"feature": "3-5 word name", "analysis": "1-2 sentence overview", '
-            '"tasks": [{"id": "t1", "title": "<task>", "description": "<details>", "tag": "3-char tag"}]}\n'
+            '"tasks": [{"id": "t1", "title": "<task>", "description": "<details>", '
+            '"tag": "3-char tag", "acceptance": ["<criterion>", ...]}]}\n'
         )
 
         _mgr_res = await self.manager.run(manager_prompt)
@@ -987,7 +1300,6 @@ class Orchestrator:
         asyncio.create_task(self._record_tool_call("manager", _mgr_res))
         raw = _mgr_res["content"]
 
-        # Parse manager JSON output
         json_match = re.search(r'\{.*\}', raw, re.DOTALL)
         plan: dict = {}
         if json_match:
@@ -996,19 +1308,17 @@ class Orchestrator:
             except json.JSONDecodeError:
                 pass
 
-        feature  = plan.get("feature", "")
+        feature = plan.get("feature", "")
         analysis = plan.get("analysis", "Decomposing project into subtasks…")
-        tasks    = plan.get("tasks", [])
+        tasks_list = plan.get("tasks", [])
 
         await self._emit_log("manager", _truncate(analysis))
-
         if feature:
             await self.sio.emit("feature_set", {"feature": feature}, room=self._room)
             await self._emit_log("manager", f"Operation: {feature}")
 
-        # Dispatch tasks to SharedTaskList
-        if tasks:
-            for t in tasks:
+        if tasks_list:
+            for t in tasks_list:
                 desc = t.get("description", "")
                 title = t.get("title", "Untitled task")
                 acceptance = t.get("acceptance", [])
@@ -1022,86 +1332,243 @@ class Orchestrator:
                     acceptance=acceptance,
                 )
             await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
-            await self._clog("task_created", f"Created {len(tasks)} tasks: {[t.get('title','') for t in tasks]}")
+            await self._clog("task_created", f"Created {len(tasks_list)} tasks")
         else:
-            # Fallback: create a single task if no tasks from manager
             await self._task_list.add_task(
                 title="Implement the project",
                 description=brief[:200],
                 created_by="manager",
-                status="available",
             )
             await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
 
-        await self._emit_agent("manager", "done")
-        await self._emit_log("manager", f"Task plan ready — {len(await self._task_list.all_tasks())} tasks.")
+        await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
 
-        # Persist task list to disk for crash recovery
-        self._task_list.save_to_disk(run_id, self._cwd)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Stage 3a: Production (Execution)
+    # ══════════════════════════════════════════════════════════════════════════
 
-        # ── Phase 2: Launch agent loops ────────────────────────────────────────
+    async def _run_stage_production(
+        self, brief: str, run_id: str,
+        executor_ids: list[str],
+    ) -> None:
         self._team_active = True
-        await self._emit_log("manager", f"Phase 2 — launching {len(agent_ids)} agent(s)…")
-        await self._clog("phase_start", f"Phase 2: {len(agent_ids)} agents running agent loops")
+        start_time = datetime.now(timezone.utc)
+        timeout_seconds = getattr(self, "_run_timeout_seconds", 600)
+        await self._emit_log("manager", f"Stage 3 — launching {len(executor_ids)} executor(s)…")
+        await self._clog("phase_start", f"Stage 3: {len(executor_ids)} agents running agent loops")
 
-        # Launch each agent in a concurrent loop, staggered by 0.5s
         async def launch_agent(aid: str, delay: float) -> None:
             await asyncio.sleep(delay)
             await self._run_agent_loop(aid, brief, run_id)
 
-        agent_tasks = [launch_agent(aid, i * 0.5) for i, aid in enumerate(agent_ids)]
+        agent_tasks = [launch_agent(aid, i * 0.5) for i, aid in enumerate(executor_ids)]
         self._agent_loops = [asyncio.create_task(t) for t in agent_tasks]
 
-        # ── Phase 3: Monitor until completion ──────────────────────────────────
+        # Monitor loop
         while self._team_active:
             await asyncio.sleep(2)
-
-            # Emit task list updates (only if changed — dirty tracking)
             if self._task_list.is_dirty():
                 await self.sio.emit("tasks_init", {"tasks": await self._task_list.all_tasks()}, room=self._room)
                 self._task_list.mark_clean()
                 asyncio.create_task(self._write_current_md_snapshot())
-
-            # Persist task list
             self._task_list.save_to_disk(run_id, self._cwd)
-
-            # Recover stale claims (tasks stuck in 'claimed' for >5 min)
             asyncio.create_task(self._task_list.recover_stale_claims(300))
-
-            # Check if all agents are done
             all_loops_done = all(t.done() for t in self._agent_loops) if self._agent_loops else True
             all_tasks_done = await self._task_list.is_all_done()
-
             if all_loops_done and all_tasks_done:
                 self._team_active = False
-
-            # Check for cancellation
             if self._cancel_requested:
                 self._team_active = False
+            # Timeout check
+            elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+            if elapsed > timeout_seconds:
+                await self._emit_terminal(f"⏱ Run timed out after {int(elapsed)}s")
+                await self.sio.emit("run_timeout", {
+                    "run_id": self._run_id,
+                    "elapsed_seconds": int(elapsed),
+                }, room=self._room)
+                self._cancel_requested = True
+                self._team_active = False
 
-        # ── Phase 4: Reviewer ───────────────────────────────────────────────────
-        await self._run_reviewer_phase(brief)
+        await self._clog("stage_complete", "Stage 3a: Execution complete")
 
-        # ── Phase 5: Finalize ──────────────────────────────────────────────────
-        # Cancel any lingering agent loops
-        for t in self._agent_loops:
-            if not t.done():
-                t.cancel()
+    # ══════════════════════════════════════════════════════════════════════════
+    # Stage 3b: Validation (multi-agent verdict)
+    # ══════════════════════════════════════════════════════════════════════════
 
-        # Persist which agents were selected
-        async with get_session() as session:
-            if session is not None:
-                run_row = await session.get(Run, run_id)
-                if run_row is not None:
-                    run_row.agents_used = json.dumps(agent_ids)
+    async def _run_stage_validation(self, brief: str) -> bool:
+        """Run two-tier validation. Returns True if overall approved."""
+        # Build common context for all validators
+        tasks = await self._task_list.all_tasks()
+        files_written: list[str] = []
+        for aid, paths in self._agent_written_files.items():
+            files_written.extend(paths)
 
-        # Final file check
-        count, files = await self._git_status()
-        await self._emit_files(count, files)
+        # Tier 1: Reviewer + Researcher concurrently
+        verdicts: list[dict] = []
 
-        summary = await self._task_list.summary()
-        await self._emit_log("manager", f"Run complete — {summary}")
-        await self._clog("run_complete", f"Task summary: {summary}")
+        async def _get_verdict(agent_id: str, role_prompt: str) -> dict | None:
+            agent = self._agents.get(agent_id)
+            if not agent:
+                return None
+            prompt = self._build_validation_prompt(
+                brief, tasks, files_written, role_prompt,
+            )
+            try:
+                raw = await self._run_with_search(agent, prompt, agent_id, max_rounds=1)
+            except Exception:
+                return None
+            verdict = self._parse_verdict(raw)
+            if verdict:
+                verdict["agentId"] = agent_id
+                asyncio.create_task(self._record_tool_call(
+                    agent_id,
+                    {"prompt_tokens": 0, "completion_tokens": 0, "_status": "ok",
+                     "_error": json.dumps(verdict)},
+                    tool_name="validation",
+                ))
+                await self.sio.emit("validation_verdict", verdict, room=self._room)
+                # Update acceptance criteria from verdict
+                for cid, cr in (verdict.get("criteria_results") or {}).items():
+                    if isinstance(cr, dict):
+                        await self._task_list.set_acceptance_met(
+                            cid, bool(cr.get("met", False)), checked_by=agent_id,
+                        )
+            return verdict
+
+        reviewer_verdict = await _get_verdict(
+            "reviewer",
+            "You are the Reviewer. Evaluate code quality, acceptance criteria, "
+            "edge cases, and completeness of the delivered code.",
+        )
+        if reviewer_verdict:
+            verdicts.append(reviewer_verdict)
+
+        # Run researcher if it exists and is a planner
+        researcher_id = next(
+            (a["id"] for a in self.config.agents
+             if a.get("planner") and a.get("id") != "manager"
+             and a.get("role", "").lower().startswith(("research", "tech"))),
+            None,
+        )
+        if researcher_id:
+            researcher_verdict = await _get_verdict(
+                researcher_id,
+                "You are the Researcher. Verify that the delivered code follows "
+                "the research recommendations (tools, libraries, approaches). "
+                "Check for compliance with the research summary.",
+            )
+            if researcher_verdict:
+                verdicts.append(researcher_verdict)
+
+        # Check agreement for Tier 1
+        tier1_approved = all(v.get("approved", True) for v in verdicts) if verdicts else True
+        has_blocker = any(
+            any(i.get("severity") == "blocker" for i in v.get("issues", []))
+            for v in verdicts
+        )
+
+        # Tier 2: Manager tiebreaker if Tier 1 disagrees
+        if not tier1_approved or has_blocker:
+            manager_verdict = await _get_verdict(
+                "manager",
+                "You are the Manager. Cast the final verdict. Below are the "
+                "validation reports from Reviewer and Researcher. You must decide "
+                'whether the output is acceptable. If you find a "blocker" issue, '
+                "the run will be rejected and require rework.",
+            )
+            if manager_verdict:
+                verdicts.append(manager_verdict)
+                overall = bool(manager_verdict.get("approved", False))
+            else:
+                overall = tier1_approved
+        else:
+            overall = tier1_approved
+
+        # Collect issues for rework
+        all_issues: list[dict] = []
+        all_criteria: dict = {}
+        for v in verdicts:
+            all_issues.extend(v.get("issues", []) or [])
+            for cid, cr in (v.get("criteria_results") or {}).items():
+                all_criteria[cid] = cr
+
+        # Emit validation result
+        await self.sio.emit("validation_complete", {
+            "overallApproved": overall,
+            "verdicts": verdicts,
+        }, room=self._room)
+
+        # Write verdicts to disk
+        try:
+            val_dir = self._cwd / ".taskmesh"
+            val_dir.mkdir(parents=True, exist_ok=True)
+            (val_dir / "validation.json").write_text(
+                json.dumps({"overallApproved": overall, "verdicts": verdicts}, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+        if not overall and self._rework_iteration < MAX_REWORK_ITERATIONS:
+            # Create rework tasks via Manager
+            issue_text = "\n".join(
+                f"[{i.get('severity', 'minor')}] {i.get('description', '')}"
+                for i in all_issues
+            )
+            rework_brief = (
+                f"Original brief: {brief}\n\n"
+                f"Validation found these issues that need fixing:\n{issue_text}\n\n"
+                "Create a new task plan addressing ONLY these issues. "
+                "Return valid JSON with tasks."
+            )
+            await self._manager_create_task_plan(
+                rework_brief, [], self._build_upload_manifest_context(),
+                extra_context=f"Rework iteration {self._rework_iteration + 1}/{MAX_REWORK_ITERATIONS}",
+            )
+            await self.sio.emit("rework_needed", {
+                "issues": all_issues,
+                "reworkTaskCount": len(await self._task_list.all_tasks()),
+            }, room=self._room)
+            await self._clog("rework_needed", f"Rework iteration {self._rework_iteration + 1}: {len(all_issues)} issues")
+
+        return overall
+
+    def _build_validation_prompt(
+        self, brief: str, tasks: list[dict],
+        files_written: list[str], role_instruction: str,
+    ) -> str:
+        """Build a validation prompt for a single agent."""
+        task_lines: list[str] = []
+        for t in tasks:
+            agent = t.get("assigned_to") or "unassigned"
+            output = ", ".join(t.get("output_files", [])[:5]) or "none"
+            task_lines.append(
+                f"  [{t['status']}] {t['id']} — {t['title']} (by {agent}, output: {output})"
+            )
+
+        return (
+            f"Project brief: {brief[:500]}\n\n"
+            f"## Completed Tasks\n" + "\n".join(task_lines) + "\n\n"
+            f"## Files Written ({len(files_written)} total)\n"
+            + "\n".join(f"  {f}" for f in files_written[:100]) + "\n\n"
+            f"## Your Role\n{role_instruction}\n\n"
+            "Return ONLY valid JSON — no markdown, no code fences:\n\n"
+            '{"approved": true/false, "summary": "<1-3 sentences>", '
+            '"issues": [{"severity": "blocker"|"major"|"minor", "description": "..."}], '
+            '"criteria_results": {"<criterion_id>": {"met": true/false, "note": "..."}}}'
+        )
+
+    @staticmethod
+    def _parse_verdict(raw: str) -> dict | None:
+        """Parse validation JSON from agent output. Returns None on failure."""
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not json_match:
+            return None
+        try:
+            return json.loads(json_match.group())
+        except json.JSONDecodeError:
+            return None
 
     # ── agent loop ─────────────────────────────────────────────────────────────
 
@@ -1166,6 +1633,16 @@ class Orchestrator:
             if file_summaries:
                 context_parts.append("Files written by other agents:\n" + "\n".join(file_summaries))
 
+            # Planner spec references (Stage 2 output)
+            if self._plan_artifacts:
+                plan_refs = "\n".join(
+                    f"  .taskmesh/plans/{aid}.md"
+                    for aid in self._plan_artifacts
+                )
+                context_parts.append(
+                    f"Planning references — read these spec files if relevant:\n{plan_refs}"
+                )
+
             context = "\n\n".join(context_parts)
 
             prompt = (
@@ -1183,48 +1660,13 @@ class Orchestrator:
 
             _exec_res = await agent.run(prompt)
             asyncio.create_task(self._deduct_credits(_exec_res))
+            asyncio.create_task(self._emit_thinking(agent_id, _exec_res.get("thinking_content", "")))
             _task_id_int = task["id"] if isinstance(task.get("id"), int) else None
-            asyncio.create_task(self._record_tool_call(agent_id, _exec_res, task_id=_task_id_int))
-            result = _exec_res["content"]
 
-            # Search-block parsing — detect <search>...</search> before FILE parser.
-            # Re-prompt with results, cap at 3 rounds to avoid infinite loops.
-            _SEARCH_RE = re.compile(r'<search>(.+?)</search>', re.DOTALL | re.IGNORECASE)
-            search_rounds = 0
-            while search_rounds < 3:
-                searches = _SEARCH_RE.findall(result)
-                if not searches:
-                    break
-                search_rounds += 1
-                search_results: list[str] = []
-                for query in searches:
-                    q = query.strip()[:200]
-                    if not q:
-                        continue
-                    sr = await self._run_search_for_agent(agent_id, q)
-                    search_results.append(sr)
-                    # Log search tool call
-                    asyncio.create_task(self._record_tool_call(
-                        agent_id,
-                        {"prompt_tokens": 0, "completion_tokens": 0, "_status": "ok",
-                         "_error": json.dumps({"query": q, "results": sr[:500]}),
-                        },
-                        tool_name="docs.search",
-                        task_id=_task_id_int,
-                    ))
-                if not search_results:
-                    break
-                enriched = (
-                    result.replace("<search>", "[SEARCH RAN] <search>").replace("</search>", "</search> [SEARCH RAN]")
-                    + "\n\n[SEARCH RESULTS]\n" + "\n---\n".join(search_results)
-                    + "\n[/SEARCH RESULTS]\n\n"
-                    "Use the search results above to refine your answer. Do NOT output <search> blocks — "
-                    "search has already been completed. Just write the code."
-                )
-                _exec_res = await agent.run(enriched)
-                asyncio.create_task(self._deduct_credits(_exec_res))
-                asyncio.create_task(self._record_tool_call(agent_id, _exec_res, task_id=_task_id_int))
-                result = _exec_res["content"]
+            # Run with search blocks — returns final content after all searches resolved
+            result = await self._run_with_search(
+                agent, prompt, agent_id, task_id=_task_id_int, max_rounds=3,
+            )
 
             # Parse FILE blocks from agent output
             parsed_files: list[tuple[str, str]] = []

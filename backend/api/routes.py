@@ -1,16 +1,19 @@
 import asyncio
 import base64
+import io
 import json
 import os
 import shutil
 import time
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -251,6 +254,7 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
     if _AUTH_DISABLED or user_id == "dev-user":
         plan = "pro"
         agent_limit = None
+        balance = 999999  # effectively unlimited for credit estimate
     else:
         # Billing gate
         from ..db.session import get_session
@@ -281,11 +285,29 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
     )
     _orchestrators[user_id] = orch
 
+    run_timeout = int(os.environ.get("RUN_TIMEOUT_SECONDS", "600"))
+    orch._run_timeout_seconds = run_timeout
+
     asyncio.create_task(
         orch.run(body.brief, user_id=user_id, agent_limit=agent_limit, plan=plan,
                  api_key="", upload_dir=upload_dir, run_id=run_id)
     )
-    return {"status": "started", "run_id": run_id}
+
+    # Credit estimate — warn if estimated cost exceeds balance (real users only)
+    credit_warning = None
+    if not (_AUTH_DISABLED or user_id == "dev-user") and plan != "none":
+        est_tokens_per_call = (4000 + 2000)  # prompt + completion estimate
+        num_agents = len(user_config.agents) - 1  # exclude manager
+        total_est_tokens = num_agents * est_tokens_per_call * 2  # 2 rounds per agent
+        est_cost_cents = max(1, int(total_est_tokens * 0.01))  # rough ~$0.01/1K tokens
+        if isinstance(balance, int) and est_cost_cents > balance:
+            credit_warning = (
+                f"This run may consume up to ${est_cost_cents / 100:.2f} in credits, "
+                f"which exceeds your balance. Consider topping up."
+            )
+
+    return {"status": "started", "run_id": run_id,
+            "credit_warning": credit_warning}
 
 
 @router.post("/cancel")
@@ -474,3 +496,50 @@ async def get_run(run_id: str, user: dict = Depends(require_auth)):
             ],
             "acceptance": acceptance,
         }
+
+
+@router.get("/runs/{run_id}/download")
+async def download_run(run_id: str, user: dict = Depends(require_auth)):
+    """Download all project files for a completed run as a ZIP archive."""
+    from ..db.session import get_session
+    from ..db.models import Run
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select
+    from fastapi import HTTPException
+    user_id = user.get("sub", "anonymous")
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="Database not configured")
+        result = await session.execute(
+            select(Run).where(Run.id == run_id).options(selectinload(Run.files))
+        )
+        run = result.scalar_one_or_none()
+        if run is None or run.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        files = run.files
+        if not files:
+            raise HTTPException(status_code=404, detail="No files in this run")
+
+        # Check total size
+        total_size = sum(f.size or len(f.content.encode()) for f in files)
+        MAX_ZIP_BYTES = 50_000_000
+        if total_size > MAX_ZIP_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Total file size ({total_size} bytes) exceeds maximum ({MAX_ZIP_BYTES} bytes)",
+            )
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for f in files:
+                zf.writestr(f.path, f.content)
+        buf.seek(0)
+
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="run-{run_id[:8]}.zip"',
+            },
+        )

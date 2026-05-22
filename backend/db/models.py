@@ -117,6 +117,23 @@ class UserCredits(Base):
     updated_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class Notification(Base):
+    """Per-user notification preferences. Stub — no email integration yet."""
+    __tablename__ = "notifications"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(String(128), nullable=False)
+    type       = Column(String(32),  nullable=False)
+    # notification types: subscription_started, credit_low
+    channel    = Column(String(16),  nullable=False, default="email")
+    enabled    = Column(Boolean,     nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    __table_args__ = (
+        Index("ix_notif_user_type", "user_id", "type", unique=True),
+    )
+
+
 class ZenUsage(Base):
     """Per-agent-call token usage log for analytics and spend tracking.
 

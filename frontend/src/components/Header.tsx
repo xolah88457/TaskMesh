@@ -1,9 +1,12 @@
-import { useRef, useCallback, useState } from 'react'
+import { useRef, useCallback, useState, useEffect } from 'react'
 import logo from '../assets/logo.svg'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { useAuthContext } from '../context/auth'
 import { useAuthFetch } from '../hooks/useAuthFetch'
+
+const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
+const LOW_BALANCE_CENTS = 250  // $2.50 threshold
 
 interface Props {
   project: string
@@ -15,6 +18,7 @@ interface Props {
   onStart: (brief: string, uploadToken?: string) => void
   onStop: () => void
   onSettings: () => void
+  onToggleSidebar?: () => void
 }
 
 interface UploadedFile {
@@ -32,7 +36,7 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-export default function Header({ project, sprint, feature, progress, elapsedSeconds, running, onStart, onStop, onSettings }: Props) {
+export default function Header({ project, sprint, feature, progress, elapsedSeconds, running, onStart, onStop, onSettings, onToggleSidebar }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { user }    = useAuthContext()
@@ -44,6 +48,7 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [uploadToken, setUploadToken]     = useState<string | null>(null)
   const [uploading, setUploading]         = useState(false)
+  const [balanceCents, setBalanceCents]   = useState<number | null>(null)
 
   const autoResize = useCallback(() => {
     const el = textareaRef.current
@@ -52,6 +57,23 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
     el.style.height = Math.min(el.scrollHeight, TEXTAREA_MAX_H) + 'px'
     el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_H ? 'auto' : 'hidden'
   }, [])
+
+  // Poll balance every 60s for low-balance warning (real users only)
+  useEffect(() => {
+    if (AUTH_DISABLED) return
+    const poll = () => {
+      authFetch('/api/billing/usage')
+        .then(r => r.json())
+        .then((d: { balance_cents?: number }) => setBalanceCents(d.balance_cents ?? null))
+        .catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 60_000)
+    return () => clearInterval(id)
+  }, [authFetch])
+
+  const showLowBalance = balanceCents !== null && balanceCents <= LOW_BALANCE_CENTS
+  const balanceCritical = balanceCents !== null && balanceCents <= 0
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = e.target.files
@@ -241,6 +263,16 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
         <span className="font-mono text-xs tabular-nums" style={{ color: 'var(--c-text-3)' }}>{mm}:{ss}</span>
 
         {/* Settings button */}
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="lg:hidden flex items-center gap-1 text-xs font-mono px-2 py-1 rounded transition-colors"
+            style={{ border: '1px solid var(--c-border)', color: 'var(--c-text-2)', height: 28 }}
+            title="Toggle sidebar"
+          >
+            ☰
+          </button>
+        )}
         <button
           onClick={onSettings}
           className="flex items-center gap-1 text-xs font-mono px-3 py-1 rounded transition-colors"
@@ -274,6 +306,20 @@ export default function Header({ project, sprint, feature, progress, elapsedSeco
         </Link>
 
         {/* Account pill — links to /account, never logs out */}
+        {showLowBalance && (
+          <Link
+            to="/billing"
+            className="text-[9px] font-mono px-2 py-1 rounded transition-colors flex items-center gap-1"
+            style={{
+              background: balanceCritical ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)',
+              border: `1px solid ${balanceCritical ? 'rgba(239,68,68,0.4)' : 'rgba(245,158,11,0.35)'}`,
+              color: balanceCritical ? '#ef4444' : '#f59e0b',
+            }}
+            title={balanceCritical ? 'Credits depleted — top up to run agents' : 'Credit balance is low'}
+          >
+            {balanceCritical ? '⚠ No credits' : '⚠ Low balance'}
+          </Link>
+        )}
         {user && (
           <Link
             to="/account"

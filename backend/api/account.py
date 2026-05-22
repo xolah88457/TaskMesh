@@ -257,3 +257,61 @@ async def delete_account(user: dict = Depends(require_auth)):
     response = JSONResponse({"status": "deleted"})
     response.delete_cookie("token", path="/")
     return response
+
+
+class NotificationToggle(BaseModel):
+    type: str       # subscription_started | credit_low
+    enabled: bool
+
+
+@router.get("/notifications")
+async def get_notifications(user: dict = Depends(require_auth)):
+    """Return notification preferences for the authenticated user."""
+    from ..db.session import get_session
+    from ..db.models import Notification
+    from sqlalchemy import select
+    user_id = user.get("sub", "anonymous")
+    result: list[dict] = []
+    async with get_session() as session:
+        if session is not None:
+            rows = await session.execute(
+                select(Notification).where(Notification.user_id == user_id)
+            )
+            result = [
+                {"type": r.type, "enabled": r.enabled, "channel": r.channel}
+                for r in rows.scalars().all()
+            ]
+    # Fill missing defaults
+    defaults = {"subscription_started": False, "credit_low": False}
+    existing = {r["type"]: r["enabled"] for r in result}
+    for t, default in defaults.items():
+        if t not in existing:
+            result.append({"type": t, "enabled": default, "channel": "email"})
+    return {"notifications": result}
+
+
+@router.put("/notifications")
+async def put_notifications(body: NotificationToggle, user: dict = Depends(require_auth)):
+    """Update a notification preference for the authenticated user."""
+    from ..db.session import get_session
+    from ..db.models import Notification
+    from sqlalchemy import select
+    user_id = user.get("sub", "anonymous")
+    async with get_session() as session:
+        if session is not None:
+            result = await session.execute(
+                select(Notification).where(
+                    Notification.user_id == user_id,
+                    Notification.type == body.type,
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                row.enabled = body.enabled
+            else:
+                session.add(Notification(
+                    user_id=user_id,
+                    type=body.type,
+                    enabled=body.enabled,
+                ))
+    return {"status": "updated", "type": body.type, "enabled": body.enabled}

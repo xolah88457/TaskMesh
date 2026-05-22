@@ -4,17 +4,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
+_PROVIDER = os.environ.get("PROVIDER", "zen").lower()
 
-# ── OpenRouter (inactive — switch when ready) ──────────────────────────────────
-# When switching to OpenRouter:
-#   1. Replace DEFAULT_BASE_URL above with OPENROUTER_BASE_URL
-#   2. Replace DEFAULT_AGENTS model IDs with OPENROUTER equivalents
-#   3. Replace OPENCODE_GO_API_KEY env var with OPENROUTER_API_KEY in config load
-#   4. Re-enable THINKING_MODEL_IDS in base_agent.py
-#
-# OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# ── End OpenRouter ─────────────────────────────────────────────────────────────
+if _PROVIDER == "openrouter":
+    DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+    _API_KEY_ENV = "OPENROUTER_API_KEY"
+else:
+    DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
+    _API_KEY_ENV = "OPENCODE_GO_API_KEY"
 
 # Default agent layout — manager only. Users add executors via Settings.
 # The manager is always required as the pipeline coordinator.
@@ -117,7 +114,7 @@ def load_config(user_id: str = "") -> ProjectConfig:
 
     # Fall back to env var for API key if not in config
     if not provider.apiKey:
-        provider.apiKey = os.environ.get("OPENCODE_GO_API_KEY", "")
+        provider.apiKey = os.environ.get(_API_KEY_ENV, "")
         # OpenRouter switch: replace line above with:
         # provider.apiKey = os.environ.get("OPENROUTER_API_KEY", "")
 
