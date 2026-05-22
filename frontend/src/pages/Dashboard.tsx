@@ -1,19 +1,25 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthFetch } from '../hooks/useAuthFetch'
 import { useAuthContext } from '../context/auth'
 
-// ── Types ────────────────────────────────────────────────────────────────────────
+// ── Data types ──────────────────────────────────────────────────────────────────
 
 interface Project {
   id: string
   name: string
+  desc: string
+  path?: string
+  icon: string
+  color: string
   status: 'running' | 'ready' | 'idle' | 'error' | 'done' | 'paused'
   progress: number
   agents: number
   files: number
-  last_active: string | null
-  created_at: string | null
+  lastActive: string
+  lastActiveSort: number
+  created: string
+  tokens: string
 }
 
 interface Usage {
@@ -21,406 +27,639 @@ interface Usage {
   balance_cents: number
 }
 
-const STATUS_CONFIG: Record<string, { color: string; label: string }> = {
-  running: { color: 'var(--accent)', label: 'running' },
-  ready:   { color: 'var(--info)', label: 'ready' },
-  idle:    { color: 'var(--text-faint)', label: 'idle' },
-  error:   { color: 'var(--danger)', label: 'error' },
-  done:    { color: 'var(--accent-dim)', label: 'done' },
-  paused:  { color: 'var(--warn)', label: 'paused' },
-}
+// ── Constants ───────────────────────────────────────────────────────────────────
 
-// ── Helpers ──────────────────────────────────────────────────────────────────────
+const STATUSES = ['running', 'ready', 'paused', 'done', 'error', 'idle'] as const
+const ALL_AGENTS: { id: string; name: string; role: string; color: string; required?: boolean }[] = [
+  { id: 'manager', name: 'Manager', role: 'Coord', color: 'var(--c-purple)', required: true },
+  { id: 'webdev', name: 'WebDev', role: 'Arch', color: 'var(--c-purple)' },
+  { id: 'researcher', name: 'Researcher', role: 'Lead', color: 'var(--c-cyan)' },
+  { id: 'backend', name: 'Backend', role: 'API', color: 'var(--c-orange)' },
+  { id: 'frontend', name: 'Frontend', role: 'UI', color: 'var(--c-green)' },
+  { id: 'tester', name: 'Tester', role: 'QA', color: 'var(--c-red)' },
+  { id: 'docs', name: 'Docs', role: 'Writer', color: 'var(--c-green)' },
+  { id: 'logger', name: 'Logger', role: 'Chron', color: 'var(--c-brown)' },
+  { id: 'reviewer', name: 'Reviewer', role: 'Review', color: 'var(--c-magenta)' },
+]
 
-const timeAgo = (dateStr: string | null): string => {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
-}
+// ── Sub-components ──────────────────────────────────────────────────────────────
 
-const EMOTES = ['🔐', '💬', '🧪', '💳', '⌨️', '📊', '📚', '📦', '🎫', '👔', '🏗️']
-
-// ── Components ────────────────────────────────────────────────────────────────────
-
-function WidgetCard({ title, children }: { title: string; children: React.ReactNode }) {
+function CreditWidget({ pct, total }: { pct: number; total: number }) {
+  const used = Math.round(total * (1 - pct / 100))
   return (
-    <div className="rounded-lg border p-5" style={{ background: 'var(--bg-elev)', borderColor: 'var(--border)' }}>
-      <div className="text-[10px] font-mono uppercase tracking-[0.08em] mb-3" style={{ color: 'var(--text-mute)' }}>
-        {title}
+    <div className="widget">
+      <div className="widget-label">
+        <span>Credit balance</span>
+        <span className="badge">resets monthly</span>
       </div>
-      {children}
+      <div className="widget-big">{pct}<span style={{ fontSize: 16, color: 'var(--text-mute)' }}>%</span></div>
+      <div className="credit-bar">
+        <div className="credit-bar-fill" style={{ width: pct + '%' }} />
+      </div>
+      <div className="credit-meta">
+        <span>{(total - used).toLocaleString()} of {total.toLocaleString()} credits</span>
+        <span style={{ color: 'var(--text-dim)' }}>~{Math.max(1, Math.round((total - used) / 14))} runs left</span>
+      </div>
     </div>
   )
 }
 
-function ProjectCard({ project, onClick }: { project: Project; onClick: () => void }) {
-  const s = STATUS_CONFIG[project.status] || STATUS_CONFIG.idle
-  const emote = EMOTES[project.id.length % EMOTES.length]
+function ProjectCountWidget({ count, activeCount }: { count: number; activeCount: number }) {
   return (
-    <button
-      onClick={onClick}
-      className="text-left rounded-lg border p-4 transition-all duration-120 w-full group"
-      style={{
-        background: 'var(--bg-elev)',
-        borderColor: 'var(--border)',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.borderColor = 'var(--border-strong)'
-        e.currentTarget.style.background = 'var(--bg-elev-2)'
-        e.currentTarget.style.transform = 'translateY(-1px)'
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.borderColor = 'var(--border)'
-        e.currentTarget.style.background = 'var(--bg-elev)'
-        e.currentTarget.style.transform = 'none'
-      }}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-3">
-        <span className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center text-sm"
-          style={{ background: 'var(--accent-soft)', border: '1px solid var(--accent)' }}>
-          {emote}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text)' }}>{project.name}</div>
-          <div className="text-[10px] truncate" style={{ color: 'var(--text-faint)' }}>/project/{project.id}</div>
-        </div>
-        <span className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--text-mute)' }}>
-          ↗
-        </span>
+    <div className="widget">
+      <div className="widget-label">
+        <span>Total projects</span>
+        <span className="badge">all time</span>
       </div>
-
-      {/* Progress */}
-      {project.progress > 0 && (
-        <div className="h-[3px] rounded-full mb-3 overflow-hidden" style={{ background: 'var(--bg-hover)' }}>
-          <div className="h-full rounded-full transition-all duration-500"
-            style={{ width: `${project.progress}%`, background: s.color }} />
-        </div>
-      )}
-
-      {/* Footer */}
-      <div className="flex items-center gap-3 pt-3" style={{ borderTop: '1px dashed var(--border)' }}>
-        <div className="flex items-center gap-1.5">
-          <span className="w-[6px] h-[6px] rounded-full"
-            style={{ background: s.color, boxShadow: project.status === 'running' ? `0 0 6px ${s.color}` : 'none' }} />
-          <span className="text-[11px]" style={{ color: s.color }}>{s.label}</span>
-        </div>
-        <span className="text-[11px]" style={{ color: 'var(--text-faint)' }}>
-          {project.agents} agents · {project.files} files
-        </span>
-        <span className="text-[10px] ml-auto" style={{ color: 'var(--text-faint)' }}>
-          {timeAgo(project.last_active)}
-        </span>
+      <div className="widget-big">{count}</div>
+      <div className="widget-sub">
+        <span style={{ color: 'var(--text-dim)' }}>{activeCount} active</span>
       </div>
-    </button>
+      <div style={{ display: 'flex', gap: 4, marginTop: 'auto' }}>
+        {['running', 'ready', 'paused', 'done', 'idle'].map((s, i) => (
+          <div key={s} style={{ flex: 1, height: 3, background: 'var(--accent)', opacity: [0.9, 0.55, 0.3, 0.45, 0.18][i], borderRadius: 1 }} />
+        ))}
+      </div>
+    </div>
   )
 }
 
-function CreateForm({ onCreated }: { onCreated: (id: string) => void }) {
-  const authFetch = useAuthFetch()
-  const [name, setName] = useState('')
-  const [brief, setBrief] = useState('')
-  const [launching, setLaunching] = useState(false)
-  const [error, setError] = useState('')
+function TasksWidget({ total }: { total: number }) {
+  const tasks = [4, 7, 9, 3, 6, 11, 14, 8, 10, 16, 18, 7, 9, 15, 12, 5, 8, 14, 13, 11, 4, 12, 15, 18, 9, 7, 13, 16, 14]
+  const max = Math.max(...tasks)
+  return (
+    <div className="widget">
+      <div className="widget-label">
+        <span>Tasks completed</span>
+        <span className="badge">May</span>
+      </div>
+      <div className="widget-big">{total}</div>
+      <div className="spend-chart">
+        {tasks.map((v, i) => (
+          <div key={i} className={'bar' + (i === tasks.length - 1 ? ' today' : '')} style={{ height: (v / max * 100) + '%' }} title={`Day ${i + 1}: ${v} tasks`} />
+        ))}
+      </div>
+      <div className="widget-sub" style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>day 29 / 31</span>
+        <span style={{ color: 'var(--text-faint)' }}>{total} total</span>
+      </div>
+    </div>
+  )
+}
 
-  const handleLaunch = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim() || !brief.trim()) return
-    setLaunching(true)
-    setError('')
-    try {
-      const r = await authFetch('/api/start-project', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), brief: brief.trim() }),
-      })
-      const d = await r.json()
-      if (!r.ok) { setError(d.detail ?? 'Failed'); return }
-      onCreated(d.run_id ?? d.id)
-    } catch {
-      setError('Network error')
-    } finally {
-      setLaunching(false)
+function QuickActionsWidget({ onAction }: { onAction: (id: string) => void }) {
+  const actions = [
+    { id: 'new', label: 'New project', ic: '＋' },
+    { id: 'billing', label: 'Billing & credits', ic: '💳' },
+    { id: 'settings', label: 'Account settings', ic: '⚙' },
+  ]
+  return (
+    <div className="widget">
+      <div className="widget-label">
+        <span>Quick actions</span>
+        <span className="badge">⌘K</span>
+      </div>
+      <div className="qa-list">
+        {actions.map(a => (
+          <button key={a.id} className="qa-btn" onClick={() => onAction(a.id)}>
+            <span className="ic">{a.ic}</span>
+            <span>{a.label}</span>
+            <span className="arr">→</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ProjectCard({ project, active, onOpen, onDelete, onChangeStatus }: {
+  project: Project; active: boolean; onOpen: () => void;
+  onDelete: (e: React.MouseEvent) => void; onChangeStatus: (p: Project, s: string) => void;
+}) {
+  const p = project
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  return (
+    <div className={'proj-card' + (active ? ' active' : '')} onClick={onOpen}>
+      <div className="proj-head">
+        <div className="proj-icon" style={{
+          background: `color-mix(in oklab, ${p.color} 14%, var(--bg-elev-2))`,
+          borderColor: `color-mix(in oklab, ${p.color} 30%, var(--border))`,
+        }}>
+          {p.icon}
+        </div>
+        <div className="proj-meta">
+          <div className="proj-name">{p.name}</div>
+          <div className="proj-path">{p.path || `/project/${p.id}`}</div>
+        </div>
+        <div className="proj-actions">
+          <button className="proj-action" title="Open" onClick={(e) => { e.stopPropagation(); onOpen() }}>↗</button>
+          <button className="proj-action danger" title="Delete" onClick={onDelete}>✕</button>
+        </div>
+      </div>
+      <div className="proj-desc">{p.desc}</div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 10, color: 'var(--text-faint)' }}>
+        <div style={{ flex: 1, height: 3, background: 'var(--bg-elev-2)', borderRadius: 2, overflow: 'hidden', border: '1px solid var(--border)' }}>
+          <div style={{ height: '100%', width: p.progress + '%', background: p.status === 'error' ? 'var(--danger)' : p.status === 'paused' ? 'var(--warn)' : 'var(--accent)' }} />
+        </div>
+        <span style={{ color: 'var(--text-dim)', minWidth: 30, textAlign: 'right' }}>{p.progress}%</span>
+      </div>
+
+      <div className="proj-foot">
+        <div className="stats">
+          <div className="status-chip-wrap" style={{ position: 'relative' }}>
+            <button className="status-chip" title="Click to change status"
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen) }}>
+              <span className={'status-dot ' + p.status} />
+              <span className={'status-label ' + p.status}>{p.status}</span>
+              <span className="caret">▾</span>
+            </button>
+            {menuOpen && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(false) }} />
+                <div className="status-menu" onClick={(e) => e.stopPropagation()}>
+                  <div className="status-menu-head">set status</div>
+                  {STATUSES.map(s => (
+                    <button key={s}
+                      className={'status-menu-row' + (s === p.status ? ' on' : '')}
+                      onClick={(e) => { e.stopPropagation(); onChangeStatus(p, s); setMenuOpen(false) }}>
+                      <span className={'status-dot ' + s} />
+                      <span className={'status-label ' + s}>{s}</span>
+                      {s === p.status && <span className="check">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <span className="stat">{p.agents} agents</span>
+          <span className="stat">{p.files} files</span>
+        </div>
+        <span>{p.lastActive}</span>
+      </div>
+    </div>
+  )
+}
+
+function ProjectsTab({ projects, activeId, onOpen, onDelete, onChangeStatus, query, setQuery, filter, setFilter, onCreateNew }: {
+  projects: Project[]; activeId: string | null; onOpen: (p: Project) => void;
+  onDelete: (p: Project) => void; onChangeStatus: (p: Project, s: string) => void;
+  query: string; setQuery: (q: string) => void; filter: string; setFilter: (f: string) => void;
+  onCreateNew: () => void;
+}) {
+  const filtered = useMemo(() => {
+    let arr = projects
+    if (filter !== 'all') arr = arr.filter(p => p.status === filter)
+    if (query.trim()) {
+      const q = query.toLowerCase()
+      arr = arr.filter(p => p.name.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q))
     }
+    return arr
+  }, [projects, query, filter])
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: projects.length, running: 0, ready: 0, paused: 0, error: 0, done: 0, idle: 0 }
+    projects.forEach(p => { c[p.status] = (c[p.status] || 0) + 1 })
+    return c
+  }, [projects])
+
+  return (
+    <div className="fadein">
+      <div className="search-row">
+        <div className="search">
+          <span style={{ color: 'var(--text-faint)' }}>⌕</span>
+          <input placeholder="Search projects, paths, descriptions…" value={query} onChange={e => setQuery(e.target.value)} />
+          <span className="kbd">⌘F</span>
+        </div>
+        <div className="filter-pills">
+          {[
+            ['all', 'all'],
+            ['running', 'running'],
+            ['ready', 'ready'],
+            ['paused', 'paused'],
+            ['done', 'done'],
+            ['error', 'error'],
+          ].map(([k, label]) => (
+            <button key={k} className={'pill' + (filter === k ? ' active' : '')} onClick={() => setFilter(k)}>
+              {label} <span style={{ opacity: 0.5, marginLeft: 4 }}>{counts[k] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="section-head">
+        <h2>// past projects</h2>
+        <span className="meta">{filtered.length} shown · click to resume in agent dashboard</span>
+      </div>
+
+      <div className="projects-grid">
+        {filtered.map(p => (
+          <ProjectCard key={p.id} project={p} active={p.id === activeId}
+            onOpen={() => onOpen(p)}
+            onDelete={(e) => { e.stopPropagation(); onDelete(p) }}
+            onChangeStatus={onChangeStatus} />
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ gridColumn: '1 / -1', padding: 40, textAlign: 'center', color: 'var(--text-faint)', border: '1px dashed var(--border)', borderRadius: 8 }}>
+            no matching projects · adjust filters or <span style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={onCreateNew}>create one</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CreateTab({ onLaunch }: { onLaunch: (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => void }) {
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
+  const [agents, setAgents] = useState(new Set(['manager', 'webdev', 'backend', 'frontend', 'tester']))
+
+  const toggleAgent = (id: string) => {
+    if (id === 'manager') return
+    const next = new Set(agents)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setAgents(next)
+  }
+
+  const canSubmit = name.trim().length >= 2 && desc.trim().length >= 8 && agents.size >= 2
+
+  const submit = () => {
+    if (!canSubmit) return
+    onLaunch({
+      name: name.trim(), desc: desc.trim(), icon: '⚡',
+      agents: Array.from(agents), autoStart: false,
+    })
   }
 
   return (
-    <form onSubmit={handleLaunch} className="rounded-lg border p-8" style={{ background: 'var(--bg-elev)', borderColor: 'var(--border)' }}>
-      <div className="text-sm font-medium mb-6" style={{ color: 'var(--text)' }}>// new project</div>
-
-      <div className="mb-7">
-        <label className="block text-[11px] uppercase tracking-[0.08em] mb-2" style={{ color: 'var(--text-mute)' }}>
-          Project Name <span style={{ color: 'var(--text-faint)' }}>· required</span>
-        </label>
-        <input value={name} onChange={e => setName(e.target.value)}
-          className="w-full text-[13px] px-4 py-2.5 rounded-md focus:outline-none font-mono"
-          style={{ background: 'var(--c-input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
-          placeholder="e.g. auth-service-rewrite" required />
+    <div className="fadein">
+      <div className="section-head">
+        <h2>// new project</h2>
+        <span className="meta">configure agents, then launch into the network</span>
       </div>
 
-      <div className="mb-7">
-        <label className="block text-[11px] uppercase tracking-[0.08em] mb-2" style={{ color: 'var(--text-mute)' }}>
-          Goal / Brief <span style={{ color: 'var(--text-faint)' }}>· the manager will plan from this</span>
-        </label>
-        <textarea value={brief} onChange={e => setBrief(e.target.value)}
-          className="w-full text-[13px] px-4 py-2.5 rounded-md focus:outline-none font-mono resize-none"
-          style={{ background: 'var(--c-input-bg)', border: '1px solid var(--border)', color: 'var(--text)', minHeight: 100 }}
-          placeholder="e.g. Build a REST API for user authentication with JWT tokens, refresh token rotation, and OAuth2 social login support…"
-          required />
+      <div className="create-wrap">
+        <div className="form-card">
+          <div className="field">
+            <label>
+              Project name
+              <span className="opt">required · kebab-case suggested</span>
+            </label>
+            <input type="text" placeholder="e.g. auth-service-rewrite" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+
+          <div className="field">
+            <label>
+              Goal / Brief
+              <span className="opt">the manager will plan from this</span>
+            </label>
+            <textarea
+              placeholder="Describe the project goal. e.g. 'Rewrite our authentication service to use JWT + WebAuthn. Replace passport-based middleware. Keep existing OAuth providers.'"
+              value={desc} onChange={e => setDesc(e.target.value)} />
+          </div>
+
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>
+              Agent network
+              <span className="opt">{agents.size} of {ALL_AGENTS.length} enabled · Manager required</span>
+            </label>
+            <div className="agent-picker">
+              {ALL_AGENTS.map(a => (
+                <button key={a.id}
+                  className={'agent-chip' + (agents.has(a.id) ? ' on' : '')}
+                  style={{ '--accent-color': a.color } as React.CSSProperties}
+                  onClick={() => toggleAgent(a.id)} disabled={a.required}>
+                  <span className="dot" />
+                  <span className="name">{a.name}</span>
+                  <span className="role">{a.role}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="create-summary">
+          <h3>// summary</h3>
+          <div className="summary-row">
+            <span className="k">name</span>
+            <span className="v">{name || <em style={{ color: 'var(--text-faint)' }}>untitled</em>}</span>
+          </div>
+          <div className="summary-row">
+            <span className="k">agents</span>
+            <span className="v">{agents.size} of {ALL_AGENTS.length}</span>
+          </div>
+          <div className="summary-row">
+            <span className="k">brief</span>
+            <span className="v">{desc ? desc.length + ' chars' : <em style={{ color: 'var(--text-faint)' }}>empty</em>}</span>
+          </div>
+
+          <div className="cta-row">
+            <button className="btn ghost" onClick={() => { setName(''); setDesc('') }}>Reset</button>
+            <button className="btn primary" disabled={!canSubmit} onClick={submit}
+              style={{ flex: 1, justifyContent: 'center', opacity: canSubmit ? 1 : 0.5 }}>
+              ▶ Launch project
+            </button>
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 12, textAlign: 'center', letterSpacing: '0.04em' }}>
+            ⏎ to launch · ⎋ to clear
+          </div>
+        </div>
       </div>
-
-      {error && <p className="text-[11px] mb-4" style={{ color: 'var(--danger)' }}>{error}</p>}
-
-      <button type="submit" disabled={launching || !name.trim() || !brief.trim()}
-        className="w-full text-[13px] font-medium py-2.5 rounded-md transition-all disabled:opacity-40"
-        style={{ background: 'var(--accent)', color: '#000' }}>
-        {launching ? 'Launching…' : '▶ Launch Project'}
-      </button>
-      <p className="text-[10px] mt-2 text-center" style={{ color: 'var(--text-faint)' }}>
-        ⏎ to launch · ⎋ to clear
-      </p>
-    </form>
+    </div>
   )
 }
 
-// ── Dashboard ────────────────────────────────────────────────────────────────────
+// ── Activity Feed ───────────────────────────────────────────────────────────────
+
+function ActivityFeed({ items }: { items: { time: string; who: string; proj: string; verb: string; target: string; detail: string; kind: string }[] }) {
+  return (
+    <div className="activity">
+      <div className="section-head">
+        <h2>// recent activity</h2>
+        <span className="meta">across all projects · past runs</span>
+      </div>
+      <div className="activity-list">
+        {items.map((it, i) => (
+          <div key={i} className="activity-item">
+            <span className={'status-dot ' + (it.kind === 'ok' ? 'done' : it.kind === 'fail' ? 'error' : it.kind === 'warn' ? 'paused' : it.kind === 'route' ? 'running' : 'idle')} />
+            <span className="time">{it.time}</span>
+            <span className="msg">
+              <span className="strong">{it.who}</span>
+              {' '}{it.verb}{' '}
+              <span className="accent">{it.target}</span>
+              {' · '}
+              <span style={{ color: 'var(--text-faint)' }}>{it.detail}</span>
+            </span>
+            <span className="who">{it.proj}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Status Bar ──────────────────────────────────────────────────────────────────
+
+function StatusBar({ tab, projectCount, creditPct }: { tab: string; projectCount: number; creditPct: number }) {
+  return (
+    <div className="statusbar">
+      <span className="sb-item accent"><span className="status-dot running" /> connected</span>
+      <span className="sb-item">tm@v0.42.1</span>
+      <span className="sb-item">us-east-1</span>
+      <span className="spacer" />
+      <span className="sb-item">tab: {tab}</span>
+      <span className="sb-item">{projectCount} projects</span>
+      <span className="sb-item">credits {creditPct}%</span>
+      <span className="sb-item" style={{ color: 'var(--text-mute)' }}>⌘K cmds</span>
+    </div>
+  )
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const authFetch  = useAuthFetch()
-  const navigate   = useNavigate()
-  const { user }   = useAuthContext()
+  const authFetch = useAuthFetch()
+  const navigate = useNavigate()
+  const { user } = useAuthContext()
+  const [tab, setTab] = useState<'create' | 'projects'>('create')
   const [projects, setProjects] = useState<Project[]>([])
-  const [usage, setUsage]       = useState<Usage | null>(null)
-  const [tab, setTab]           = useState<'projects' | 'create'>('projects')
-  const [search, setSearch]     = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState('all')
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
+  const [accountOpen, setAccountOpen] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const [usage, setUsage] = useState<Usage | null>(null)
 
-  const fetchProjects = () => {
+  useEffect(() => {
     authFetch('/api/projects')
       .then(r => r.json())
       .then((d: { projects?: Project[] }) => setProjects(d.projects ?? []))
       .catch(() => {})
-  }
-
-  const fetchUsage = () => {
     authFetch('/api/billing/usage')
       .then(r => r.json())
       .then(setUsage)
       .catch(() => {})
-  }
-
-  useEffect(() => {
-    fetchProjects()
-    fetchUsage()
   }, [])
 
-  const filtered = projects.filter(p => {
-    if (statusFilter !== 'all' && p.status !== statusFilter) return false
-    if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
+  // Set data-theme from localStorage
+  useEffect(() => {
+    const themeId = localStorage.getItem('agentteam-theme') ?? 'default'
+    const dataTheme = themeId === 'default' ? 'black' : themeId === 'matrix' ? 'matrix' : themeId === 'tokyo-night' ? 'tokyo' : themeId
+    document.documentElement.setAttribute('data-theme', dataTheme)
+  }, [])
 
-  const statusCounts: Record<string, number> = {}
-  projects.forEach(p => {
-    statusCounts[p.status] = (statusCounts[p.status] || 0) + 1
-  })
+  const openInAgent = (p: Project) => {
+    setActiveId(p.id)
+    navigate(`/project/${p.id}`)
+  }
 
-  const statusLabels = ['all', 'running', 'ready', 'paused', 'done', 'error']
+  const launchNew = (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => {
+    const newProj: Project = {
+      id: 'p_' + Math.random().toString(36).slice(2, 8),
+      name: cfg.name,
+      desc: cfg.desc,
+      path: '~/projects/' + cfg.name,
+      icon: cfg.icon,
+      color: 'var(--c-cyan)',
+      status: cfg.autoStart ? 'running' : 'ready',
+      progress: 0,
+      agents: cfg.agents.length,
+      files: 0,
+      lastActive: 'just now',
+      lastActiveSort: 0,
+      created: 'just now',
+      tokens: '0K',
+    }
+    setProjects([newProj, ...projects])
+    setActiveId(newProj.id)
+    navigate(`/project/${newProj.id}`)
+  }
+
+  const confirmDelete = (p: Project) => setDeleteTarget(p)
+  const doDelete = () => {
+    if (!deleteTarget) return
+    setProjects(projects.filter(p => p.id !== deleteTarget.id))
+    setToast(`deleted ${deleteTarget.name}`)
+    setDeleteTarget(null)
+  }
+
+  const changeStatus = (proj: Project, status: string) => {
+    setProjects(projects.map(p => p.id === proj.id ? { ...p, status: status as Project['status'] } : p))
+    setToast(`${proj.name} → ${status}`)
+  }
+
+  const handleQuickAction = (id: string) => {
+    if (id === 'new') setTab('create')
+    else if (id === 'billing') navigate('/billing')
+    else if (id === 'settings') navigate('/settings')
+  }
+
+  const creditPct = usage ? Math.round((usage.balance_cents / 10000) * 100) : 0
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (deleteTarget) setDeleteTarget(null)
+        else if (accountOpen) setAccountOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [deleteTarget, accountOpen])
+
+  // Toast auto-dismiss
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 2400)
+      return () => clearTimeout(t)
+    }
+  }, [toast])
+
+  // Close account popover on outside click
+  useEffect(() => {
+    if (!accountOpen) return
+    const onDoc = (e: MouseEvent) => {
+      const el = document.querySelector('.account-pop-wrap')
+      if (el && !el.contains(e.target as Node)) setAccountOpen(false)
+    }
+    setTimeout(() => document.addEventListener('click', onDoc), 0)
+    return () => document.removeEventListener('click', onDoc)
+  }, [accountOpen])
+
+  const userName = user?.name || user?.email?.split('@')[0] || 'User'
+  const userInitials = userName.slice(0, 2).toUpperCase()
+
+  // Sample activities (eventually from API)
+  const activities = projects.slice(0, 8).map(p => ({
+    time: p.lastActive, who: 'Agent', proj: p.name,
+    verb: 'worked on', target: p.name, detail: `${p.files} files · ${p.tokens}`,
+    kind: p.status === 'running' ? 'route' : p.status === 'error' ? 'fail' : 'ok',
+  }))
 
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden font-mono"
-      style={{ background: 'var(--bg)', color: 'var(--text)' }}>
-      {/* Topbar */}
-      <div className="flex items-center gap-5 shrink-0 px-6 h-14"
-        style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-elev)' }}>
-        {/* Logo */}
-        <button onClick={() => navigate('/')} className="shrink-0 w-[26px] h-[26px] rounded-[5px] flex items-center justify-center text-[11px] font-bold transition-colors"
-          style={{ border: '1px solid var(--border)', color: 'var(--accent)' }}>
-          tm
-        </button>
-        <span className="text-xs" style={{ color: 'var(--text-mute)' }}>›</span>
-
-        {/* Tabs */}
-        <div className="flex rounded-[7px] p-1 gap-[3px]" style={{ background: 'var(--bg-elev-2)' }}>
-          {(['projects', 'create'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className="text-[13px] font-medium tracking-[0.02em] px-5 py-1.5 rounded-[5px] transition-all capitalize"
-              style={{
-                color: tab === t ? 'var(--accent)' : 'var(--text-dim)',
-                background: tab === t ? 'var(--bg-hover)' : 'transparent',
-                boxShadow: tab === t ? 'inset 0 0 0 1px rgba(255,255,255,0.06)' : 'none',
-              }}>
-              {t}
-            </button>
-          ))}
+    <div className="app no-rail-mode">
+      <div className="topbar">
+        <div className="crumbs">
+          <div className="logo">tm</div>
+          <span className="seg">src</span>
+          <span className="sep">›</span>
+          <span className="seg active">dashboard</span>
+          <span className="sep">›</span>
+          <span className="seg" style={{ color: 'var(--accent)' }}>{tab === 'create' ? 'create' : 'projects'}</span>
         </div>
 
-        {/* Spacer */}
-        <div className="flex-1" />
+        <div className="tabs">
+          <button className={tab === 'create' ? 'active' : ''} onClick={() => setTab('create')}>＋ Create</button>
+          <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>
+            ▦ Projects <span style={{ marginLeft: 4, opacity: 0.6 }}>{projects.length}</span>
+          </button>
+        </div>
 
-        {/* Billing */}
+        <div className="spacer" />
+
         {usage && usage.plan !== 'none' && (
-          <div className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-dim)' }}>
-            <span style={{ color: 'var(--accent)' }}>
-              ${(usage.balance_cents / 100).toFixed(0)}
-            </span>
-            <span className="text-[10px]" style={{ color: 'var(--text-mute)' }}>credits</span>
-          </div>
+          <button className="iconbtn" title="Credits" onClick={() => navigate('/billing')}>
+            ${(usage.balance_cents / 100).toFixed(0)} credits
+          </button>
         )}
-        <button onClick={() => navigate('/billing')}
-          className="text-[12px] px-3 py-1.5 rounded-md transition-colors"
-          style={{ border: '1px solid var(--border)', color: 'var(--text-dim)', background: 'var(--bg-elev)' }}>
-          ✦ Billing
+        <button className="iconbtn" title="Billing" onClick={() => navigate('/billing')}>
+          💳 Billing
         </button>
 
-        {/* User pill */}
-        <button onClick={() => navigate('/settings')}
-          className="text-[12px] px-3 py-1.5 rounded-md transition-colors shrink-0 max-w-[120px] truncate"
-          style={{ border: '1px solid var(--border)', color: 'var(--text-dim)', background: 'var(--bg-elev)' }}>
-          {user?.name || user?.email?.split('@')[0] || 'User'}
-        </button>
-      </div>
-
-      {/* Canvas */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-[1440px] mx-auto px-12 pt-9 pb-16">
-
-          {/* Widgets */}
-          <div className="grid gap-5 mb-10" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <WidgetCard title="Credit Balance">
-              {usage ? (
-                <>
-                  <div className="text-[28px] font-semibold tracking-[-0.02em]" style={{ color: 'var(--text)' }}>
-                    {(usage.balance_cents / 100).toFixed(0)}%
-                  </div>
-                  <div className="h-2 rounded-full mt-2 overflow-hidden" style={{ background: 'var(--bg-hover)' }}>
-                    <div className="h-full rounded-full transition-all" style={{ width: '72%', background: 'var(--accent)' }} />
-                  </div>
-                  <div className="text-[10px] mt-1.5" style={{ color: 'var(--text-mute)' }}>
-                    ${(usage.balance_cents / 100).toFixed(0)} of credits
-                  </div>
-                </>
-              ) : (
-                <div className="text-[13px]" style={{ color: 'var(--text-mute)' }}>No active plan</div>
-              )}
-            </WidgetCard>
-
-            <WidgetCard title="Total Projects">
-              <div className="text-[28px] font-semibold tracking-[-0.02em]" style={{ color: 'var(--text)' }}>
-                {projects.length}
-              </div>
-              <div className="flex gap-1 mt-2">
-                {(['running', 'ready', 'paused', 'done'] as const).map(s => {
-                  const count = statusCounts[s] || 0
-                  if (!count) return null
-                  return (
-                    <div key={s}
-                      className="h-1.5 rounded-full flex-1"
-                      style={{ background: STATUS_CONFIG[s].color, opacity: 0.6 }} />
-                  )
-                })}
-              </div>
-              <div className="text-[10px] mt-1.5" style={{ color: 'var(--text-mute)' }}>
-                {statusCounts.running || 0} active
-              </div>
-            </WidgetCard>
-
-            <WidgetCard title="Quick Actions">
-              <button onClick={() => setTab('create')}
-                className="w-full text-left text-[12px] py-2 rounded-md transition-colors flex items-center gap-2 group px-3"
-                style={{ color: 'var(--text-dim)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-dim)' }}>
-                <span>⌖</span> New project
-                <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-[10px]">→</span>
-              </button>
-              <button onClick={() => navigate('/billing')}
-                className="w-full text-left text-[12px] py-2 rounded-md transition-colors flex items-center gap-2 group px-3"
-                style={{ color: 'var(--text-dim)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-dim)' }}>
-                <span>✦</span> Manage billing
-                <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-[10px]">→</span>
-              </button>
-              <button onClick={() => navigate('/settings')}
-                className="w-full text-left text-[12px] py-2 rounded-md transition-colors flex items-center gap-2 group px-3"
-                style={{ color: 'var(--text-dim)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-dim)' }}>
-                <span>⚙</span> Settings
-                <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-[10px]">→</span>
-              </button>
-            </WidgetCard>
-          </div>
-
-          {/* Content area */}
-          {tab === 'create' ? (
-            <CreateForm onCreated={(id) => { fetchProjects(); navigate(`/project/${id}`) }} />
-          ) : (
-            <>
-              {/* Search + filters */}
-              <div className="flex items-center gap-4 mb-6">
-                <div className="flex-1 relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px]" style={{ color: 'var(--text-faint)' }}>⌕</span>
-                  <input value={search} onChange={e => setSearch(e.target.value)}
-                    className="w-full text-[13px] pl-9 pr-4 py-2 rounded-md focus:outline-none font-mono"
-                    style={{ background: 'var(--c-input-bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
-                    placeholder="Search projects…" />
+        <div className="account-pop-wrap" style={{ position: 'relative' }}>
+          <button className="iconbtn" onClick={() => setAccountOpen(!accountOpen)}
+            style={{ padding: '3px 8px 3px 4px' }}>
+            <div className="avatar">{userInitials}</div>
+            <span style={{ color: 'var(--text-dim)' }}>{userName}</span>
+            <span style={{ color: 'var(--text-faint)' }}>▾</span>
+          </button>
+          {accountOpen && (
+            <div className="account-pop fadein">
+              <div className="ap-head">
+                <div className="avatar" style={{ width: 30, height: 30, fontSize: 11 }}>{userInitials}</div>
+                <div className="info">
+                  <div className="nm">{user?.name || 'User'}</div>
+                  <div className="em">{user?.email || ''}</div>
                 </div>
               </div>
-              <div className="flex gap-2 mb-6">
-                {statusLabels.map(s => {
-                  const count = s === 'all' ? projects.length : (statusCounts[s] || 0)
-                  return (
-                    <button key={s} onClick={() => setStatusFilter(s)}
-                      className="text-[11px] tracking-[0.04em] px-3 py-1 rounded-md transition-all capitalize flex items-center gap-1.5"
-                      style={{
-                        color: statusFilter === s ? 'var(--accent)' : 'var(--text-dim)',
-                        background: statusFilter === s ? 'var(--accent-soft)' : 'var(--bg-elev)',
-                        border: `1px solid ${statusFilter === s ? 'var(--accent)' : 'var(--border)'}`,
-                      }}>
-                      {s}
-                      <span className="text-[9px]" style={{ color: 'var(--text-faint)' }}>{count}</span>
-                    </button>
-                  )
-                })}
+              <div className="ap-row" onClick={() => { setAccountOpen(false); navigate('/settings') }}>
+                <span className="ic">⚙</span> Account settings
               </div>
-
-              {/* Project grid */}
-              {filtered.length === 0 ? (
-                <div className="text-center py-12 rounded-lg border-dashed border"
-                  style={{ borderColor: 'var(--border)', color: 'var(--text-mute)' }}>
-                  <p className="text-[13px]">no matching projects</p>
-                  <button onClick={() => setTab('create')} className="text-[12px] mt-2"
-                    style={{ color: 'var(--accent)' }}>
-                    create one →
-                  </button>
-                </div>
-              ) : (
-                <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-                  {filtered.map(p => (
-                    <ProjectCard key={p.id} project={p}
-                      onClick={() => navigate(`/project/${p.id}`)} />
-                  ))}
-                </div>
-              )}
-            </>
+              <div className="ap-row" onClick={() => { setAccountOpen(false); navigate('/billing') }}>
+                <span className="ic">💳</span> Billing & credits
+              </div>
+              <div className="ap-row" onClick={() => { setAccountOpen(false); setToast('api keys — coming soon') }}>
+                <span className="ic">🔑</span> API keys
+              </div>
+              <div className="ap-sep" />
+              <div className="ap-row" onClick={() => { setAccountOpen(false); setToast('docs — coming soon') }}>
+                <span className="ic">📖</span> Docs
+              </div>
+              <div className="ap-sep" />
+              <div className="ap-row" style={{ color: 'var(--danger)' }} onClick={() => { setAccountOpen(false); setToast('sign out — placeholder') }}>
+                <span className="ic">↗</span> Sign out
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Status bar */}
-      <div className="flex items-center gap-4 shrink-0 h-6 px-3 text-[10px] tracking-[0.04em]"
-        style={{ background: 'var(--bg-elev)', borderTop: '1px solid var(--border)', color: 'var(--text-faint)' }}>
-        <span style={{ color: 'var(--accent)' }}>●</span> connected
-        <span>tm@{import.meta.env.VITE_APP_VERSION || 'v0.4'}</span>
-        <span className="ml-auto">{projects.length} projects</span>
+      <div className="main no-rail">
+        <div className="canvas">
+          <div className="widgets">
+            <CreditWidget pct={creditPct} total={10000} />
+            <ProjectCountWidget count={projects.length} activeCount={projects.filter(p => p.status === 'running' || p.status === 'ready').length} />
+            <TasksWidget total={283} />
+            <QuickActionsWidget onAction={handleQuickAction} />
+          </div>
+
+          {tab === 'create' ? (
+            <CreateTab onLaunch={launchNew} />
+          ) : (
+            <ProjectsTab
+              projects={projects} activeId={activeId} onOpen={openInAgent}
+              onDelete={confirmDelete} onChangeStatus={changeStatus}
+              query={query} setQuery={setQuery} filter={filter} setFilter={setFilter}
+              onCreateNew={() => setTab('create')}
+            />
+          )}
+
+          {activities.length > 0 && <ActivityFeed items={activities} />}
+        </div>
       </div>
+
+      <StatusBar tab={tab} projectCount={projects.length} creditPct={creditPct} />
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="modal-mask fadein" onClick={() => setDeleteTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>// delete project</h3>
+            <p>You're about to permanently delete <span className="danger-target">{deleteTarget.name}</span>. This removes all agent transcripts, logged outputs, and changed file history. This cannot be undone.</p>
+            <div className="modal-cta">
+              <button className="btn ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button className="btn danger" onClick={doDelete}>Delete project</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fadein toast-bar" style={{
+          position: 'fixed', bottom: 36, left: '50%', transform: 'translateX(-50%)',
+          background: 'var(--bg-elev)', border: '1px solid var(--border-strong)',
+          padding: '8px 14px', borderRadius: 6, fontSize: 11, color: 'var(--text)',
+          boxShadow: 'var(--shadow)', zIndex: 100,
+        }}>
+          <span style={{ color: 'var(--accent)', marginRight: 6 }}>▌</span>
+          {toast}
+        </div>
+      )}
     </div>
   )
 }

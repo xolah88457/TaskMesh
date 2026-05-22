@@ -17,7 +17,6 @@ import { useSocket } from './hooks/useSocket'
 import { useAuthContext } from './context/auth'
 import { useAuthFetch } from './hooks/useAuthFetch'
 import { getTheme, DEFAULT_THEME_ID } from './themes'
-import './dashboard.css'
 
 const SIDEBAR_MIN = 180
 const SIDEBAR_MAX = 520
