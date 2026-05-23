@@ -3,6 +3,7 @@ import base64
 import io
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -186,7 +187,6 @@ class ProjectBrief(BaseModel):
 
 def _make_slug(name: str) -> str:
     """Convert a project name into a URL-safe slug."""
-    import re
     s = name.strip().lower()
     s = re.sub(r'[^a-z0-9]+', '-', s)
     return s.strip('-') or "project"
@@ -243,11 +243,13 @@ async def get_project(project_id: str, user: dict = Depends(require_auth)):
 
         # Find latest run status for this project
         from ..db.models import Run
+        from sqlalchemy.orm import selectinload
         run_result = await session.execute(
             select(Run)
             .where(Run.project_id == project_id)
             .order_by(Run.started_at.desc())
             .limit(1)
+            .options(selectinload(Run.files))
         )
         run = run_result.scalar_one_or_none()
         file_count = 0
