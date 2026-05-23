@@ -185,6 +185,14 @@ class ProjectBrief(BaseModel):
     upload_token: str | None = None
 
 
+class CreateProject(BaseModel):
+    name: str
+    brief: str
+    icon: str = ""
+    agents: list[str] = []
+    auto_start: bool = True
+
+
 def _make_slug(name: str) -> str:
     """Convert a project name into a URL-safe slug."""
     s = name.strip().lower()
@@ -267,6 +275,118 @@ async def get_project(project_id: str, user: dict = Depends(require_auth)):
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
             "file_count": file_count,
         }
+
+
+@router.post("/projects")
+async def create_project(body: CreateProject, user: dict = Depends(require_auth)):
+    """Create a project and optionally start its first run."""
+    from ..db.models import Project, Run
+    from ..db.session import get_session
+    user_id = user.get("sub", "anonymous")
+
+    base_slug = _make_slug(body.name)
+    slug = base_slug
+    counter = 1
+
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+
+        while True:
+            existing = await session.execute(
+                select(Project).where(Project.user_id == user_id, Project.slug == slug)
+            )
+            if existing.scalar_one_or_none() is None:
+                break
+            counter += 1
+            slug = f"{base_slug}-{counter}"
+
+        project_id = str(uuid.uuid4())
+        project = Project(
+            id=project_id,
+            user_id=user_id,
+            name=body.name,
+            slug=slug,
+            desc=body.brief,
+            icon=body.icon,
+        )
+        session.add(project)
+        await session.commit()
+
+    run_id = None
+
+    if body.auto_start:
+        plan, balance = "pro", 999999
+        agent_limit = None
+        if not (_AUTH_DISABLED or user_id == "dev-user"):
+            from ..db.session import get_session as gs
+            from ..db.models import UserCredits
+            async with gs() as sess:
+                if sess is not None:
+                    creds = await sess.get(UserCredits, user_id)
+                    plan = creds.plan if creds else "none"
+                    balance = creds.balance_cents if creds else 0
+            if plan == "none":
+                return {
+                    "project_id": project_id,
+                    "slug": slug,
+                    "run_id": None,
+                    "error": "no_subscription",
+                }
+            if balance <= 0:
+                return {
+                    "project_id": project_id,
+                    "slug": slug,
+                    "run_id": None,
+                    "error": "no_credits",
+                }
+            agent_limit = 3 if plan == "starter" else None
+
+        project_dir = get_project_dir(slug)
+
+        run_id = str(uuid.uuid4())
+        room = f"user:{user_id}"
+        user_config = await _load_user_config(user_id, project_name=body.name)
+
+        orch = Orchestrator(
+            sio=_sio,
+            config=user_config,
+            room=room,
+            on_done=_orchestrator_done,
+        )
+        orch._cwd = project_dir
+        _orchestrators[user_id] = orch
+
+        run_timeout = int(os.environ.get("RUN_TIMEOUT_SECONDS", "600"))
+        orch._run_timeout_seconds = run_timeout
+
+        asyncio.create_task(
+            orch.run(
+                body.brief,
+                user_id=user_id,
+                agent_limit=agent_limit,
+                plan=plan,
+                api_key="",
+                upload_dir="",
+                run_id=run_id,
+                selected_agents=body.agents if body.agents else None,
+                project_id=project_id,
+            )
+        )
+
+        return {
+            "project_id": project_id,
+            "slug": slug,
+            "run_id": run_id,
+            "status": "started",
+        }
+
+    return {
+        "project_id": project_id,
+        "slug": slug,
+        "run_id": None,
+        "status": "created",
+    }
 
 
 class UploadFileItem(BaseModel):
