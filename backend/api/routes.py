@@ -313,6 +313,10 @@ async def create_project(body: CreateProject, user: dict = Depends(require_auth)
         session.add(project)
         await session.commit()
 
+    existing = _orchestrators.get(user_id)
+    if existing is not None and existing.is_running():
+        return {"error": "already_running", "status": "busy"}
+
     run_id = None
 
     if body.auto_start:
