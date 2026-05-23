@@ -460,10 +460,11 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
         asyncio.create_task(_cleanup_expired_tokens())
 
     # Billing gate
+    from ..db.session import get_session
+
     if _AUTH_DISABLED or user_id == "dev-user":
         plan, agent_limit, balance = "pro", None, 999999
     else:
-        from ..db.session import get_session
         from ..db.models import UserCredits
         plan, balance = "none", 0
         async with get_session() as session:
