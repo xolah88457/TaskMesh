@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthFetch } from '../hooks/useAuthFetch'
 import { useAuthContext } from '../context/auth'
@@ -455,6 +455,11 @@ export default function Dashboard() {
   const [toast, setToast] = useState<string | null>(null)
   const [alertsOpen, setAlertsOpen] = useState(false)
   const [usage, setUsage] = useState<Usage | null>(null)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    return () => { mounted.current = false }
+  }, [])
 
   // Load projects from API
   useEffect(() => {
@@ -504,6 +509,7 @@ export default function Dashboard() {
   const launchNew = async (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => {
     setToast(`launching ${cfg.name}...`)
 
+    let d: any
     try {
       const r = await authFetch('/api/projects', {
         method: 'POST',
@@ -516,9 +522,9 @@ export default function Dashboard() {
           auto_start: cfg.autoStart,
         }),
       })
-      const d = await r.json()
 
       if (!r.ok) {
+        try { d = await r.json() } catch { d = {} }
         if (d.error === 'no_subscription') {
           setToast('You need a subscription to start projects')
           navigate('/billing')
@@ -533,63 +539,70 @@ export default function Dashboard() {
         return
       }
 
-      if (d.run_id) {
-        setActiveId(d.project_id)
-        setToast(`launched ${cfg.name}`)
-        navigate(`/project/${d.run_id}`)
-      } else {
-        setActiveId(d.project_id)
-        setTab('projects')
-        setToast(`created ${cfg.name}`)
-      }
+      d = await r.json()
+    } catch {
+      setToast('Could not start project. Try again.')
+      return
+    }
 
-      authFetch('/api/projects')
-        .then(r => r.json())
-        .then((resp: { projects?: ApiProject[] }) => {
-          setProjects(() => {
-            const mapped: Project[] = (resp.projects ?? []).map(p => ({
-              id: p.id,
-              name: p.name,
-              desc: p.desc || '',
-              path: `~/projects/${p.slug}`,
-              icon: p.icon || '📁',
+    if (d.run_id) {
+      setActiveId(d.project_id)
+      setToast(`launched ${cfg.name}`)
+      navigate(`/project/${d.run_id}`)
+    } else {
+      setActiveId(d.project_id)
+      setTab('projects')
+      setToast(`created ${cfg.name}`)
+    }
+
+    authFetch('/api/projects')
+      .then(r => r.json())
+      .then((resp: { projects?: ApiProject[] }) => {
+        if (!mounted.current) return
+        setProjects(() => {
+          const mapped: Project[] = (resp.projects ?? []).map(p => ({
+            id: p.id,
+            name: p.name,
+            desc: p.desc || '',
+            path: `~/projects/${p.slug}`,
+            icon: p.icon || '📁',
+            color: 'var(--c-cyan)',
+            status: 'ready' as Project['status'],
+            progress: 0,
+            agents: cfg.agents.length,
+            files: 0,
+            lastActive: 'just now',
+            lastActiveSort: Date.now(),
+            created: 'just now',
+            tokens: '0K',
+          }))
+          const ids = new Set(mapped.map(p => p.id))
+          const merged = mapped.slice()
+          if (!ids.has(d.project_id)) {
+            merged.unshift({
+              id: d.project_id,
+              name: cfg.name,
+              desc: cfg.desc,
+              path: `~/projects/${d.slug || cfg.name}`,
+              icon: cfg.icon,
               color: 'var(--c-cyan)',
-              status: 'ready' as Project['status'],
+              status: cfg.autoStart ? 'running' : 'ready',
               progress: 0,
               agents: cfg.agents.length,
               files: 0,
               lastActive: 'just now',
-              lastActiveSort: Date.now(),
+              lastActiveSort: 0,
               created: 'just now',
               tokens: '0K',
-            }))
-            const ids = new Set(mapped.map(p => p.id))
-            const merged = mapped.slice()
-            if (!ids.has(d.project_id)) {
-              merged.unshift({
-                id: d.project_id,
-                name: cfg.name,
-                desc: cfg.desc,
-                path: `~/projects/${d.slug || ''}`,
-                icon: cfg.icon,
-                color: 'var(--c-cyan)',
-                status: cfg.autoStart ? 'running' : 'ready',
-                progress: 0,
-                agents: cfg.agents.length,
-                files: 0,
-                lastActive: 'just now',
-                lastActiveSort: 0,
-                created: 'just now',
-                tokens: '0K',
-              })
-            }
-            return merged
-          })
+            })
+          }
+          return merged
         })
-        .catch(() => setToast('project started, could not refresh list'))
-    } catch {
-      setToast('Could not start project. Try again.')
-    }
+      })
+      .catch(() => {
+        if (!mounted.current) return
+        setToast(d.run_id ? 'project started, could not refresh list' : 'project created, could not refresh list')
+      })
   }
 
   const confirmDelete = (p: Project) => setDeleteTarget(p)
