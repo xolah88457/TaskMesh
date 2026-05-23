@@ -96,13 +96,13 @@ async def _run_migrations() -> None:
         await conn.execute(text(
             "ALTER TABLE runs ADD COLUMN IF NOT EXISTS project_id VARCHAR(36)"
         ))
-        try:
-            await conn.execute(text(
-                "ALTER TABLE runs ADD CONSTRAINT fk_runs_project_id "
-                "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
-            ))
-        except Exception:
-            pass  # constraint already exists
+        await conn.execute(text(
+            "DO $$ BEGIN "
+            "ALTER TABLE runs ADD CONSTRAINT fk_runs_project_id "
+            "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE; "
+            "EXCEPTION WHEN duplicate_object THEN NULL; "
+            "END $$;"
+        ))
         await conn.execute(text(
             "ALTER TABLE runs ADD COLUMN IF NOT EXISTS selected_agents TEXT"
         ))
