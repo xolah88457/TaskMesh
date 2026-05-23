@@ -1,0 +1,64 @@
+{
+  "workflows": {
+    "new-feature": {
+      "description": "Build a new feature, component, or capability",
+      "skills": [
+        "using-superpowers",
+        "brainstorming",
+        "writing-plans",
+        "executing-plans",
+        "subagent-driven-development",
+        "verification-before-completion",
+        "finishing-a-development-branch"
+      ]
+    },
+    "bug-fix": {
+      "description": "Fix a bug, test failure, or unexpected behavior",
+      "skills": [
+        "using-superpowers",
+        "systematic-debugging",
+        "test-driven-development",
+        "requesting-code-review"
+      ]
+    },
+    "ui-work": {
+      "description": "Build or modify UI components, pages, or styling",
+      "skills": [
+        "using-superpowers",
+        "frontend-design",
+        "web-design-guidelines",
+        "webapp-testing"
+      ]
+    },
+    "backend-work": {
+      "description": "Build or modify FastAPI endpoints, services, or database",
+      "skills": [
+        "using-superpowers",
+        "fastapi-templates",
+        "python-testing-patterns"
+      ]
+    },
+    "deployment": {
+      "description": "Deploy to Vercel or Render",
+      "skills": [
+        "using-superpowers",
+        "deploy-to-vercel"
+      ]
+    },
+    "billing": {
+      "description": "Implement subscription billing, payments, or Paddle integration",
+      "skills": [
+        "using-superpowers",
+        "billing-automation"
+      ]
+    },
+    "code-review": {
+      "description": "Request or receive a code review",
+      "skills": [
+        "using-superpowers",
+        "requesting-code-review",
+        "receiving-code-review"
+      ]
+    }
+  }
+}

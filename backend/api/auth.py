@@ -479,7 +479,7 @@ async def exchange_token(request: Request):
 
     OAuth tokens always get a 7-day remember-me cookie.
     """
-    from ..auth.auth import _verify_token, set_token_cookie, _TOKEN_DAYS
+    from ..auth.auth import decode_token, set_token_cookie, _TOKEN_DAYS
     try:
         body = await request.json()
     except Exception:
@@ -488,7 +488,7 @@ async def exchange_token(request: Request):
     if not jwt_str:
         raise HTTPException(status_code=400, detail="Missing token")
     try:
-        claims = _verify_token(jwt_str)
+        claims = decode_token(jwt_str)
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     resp = JSONResponse({"id": claims.get("sub", ""), "email": claims.get("email", ""), "name": claims.get("name", "")})

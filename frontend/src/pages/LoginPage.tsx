@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useState, useEffect, type FormEvent } from 'react'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuthContext } from '../context/auth'
 
 export default function LoginPage() {
   const { login } = useAuthContext()
   const navigate  = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
@@ -13,6 +14,11 @@ export default function LoginPage() {
   const [loading, setLoading]   = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [githubLoading, setGithubLoading] = useState(false)
+
+  useEffect(() => {
+    const err = searchParams.get('error')
+    if (err) setError(decodeURIComponent(err))
+  }, [searchParams])
 
   const handleOAuth = async (
     provider: 'google' | 'github',
@@ -52,7 +58,7 @@ export default function LoginPage() {
       }
       const success = await login()
       if (!success) { setError('Login failed — could not verify session'); return }
-      navigate('/', { replace: true })
+      navigate('/', { replace: false })
     } catch {
       setError('Network error — is the backend running?')
     } finally {
