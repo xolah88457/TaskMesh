@@ -87,16 +87,6 @@ def set_token_cookie(
         samesite=samesite,
         path="/",
     )
-    # Explicitly set domain when FRONTEND_URL is configured so the cookie
-    # survives the proxy hop. Without this, the cookie domain may default
-    # to the backend origin (e.g. render.com) instead of the frontend origin
-    # that the browser is actually on.
-    frontend = os.environ.get("FRONTEND_URL", "")
-    if frontend:
-        from urllib.parse import urlparse
-        host = urlparse(frontend).hostname
-        if host and host not in ("localhost", "127.0.0.1"):
-            cookie_kwargs["domain"] = host
     if max_days is not None:
         cookie_kwargs["max_age"] = max_days * 86400
     response.set_cookie(**cookie_kwargs)
