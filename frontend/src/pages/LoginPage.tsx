@@ -58,7 +58,7 @@ export default function LoginPage() {
       }
       const success = await login()
       if (!success) { setError('Login failed — could not verify session'); return }
-      navigate('/', { replace: false })
+      navigate('/', { replace: true })
     } catch {
       setError('Network error — is the backend running?')
     } finally {

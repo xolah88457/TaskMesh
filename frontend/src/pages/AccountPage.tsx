@@ -86,6 +86,24 @@ export default function AccountPage() {
     subscription_started: false, credit_low: false,
   })
 
+  // OAuth connect buttons
+  const [googleConnecting, setGoogleConnecting] = useState(false)
+  const [githubConnecting, setGithubConnecting] = useState(false)
+
+  const handleConnect = async (provider: 'google' | 'github') => {
+    const setLoading = provider === 'google' ? setGoogleConnecting : setGithubConnecting
+    setLoading(true)
+    try {
+      const r = await authFetch(`/api/auth/${provider}/url`)
+      const data = await r.json()
+      if (data.auth_url) {
+        window.location.href = data.auth_url
+      }
+    } catch {
+      setLoading(false)
+    }
+  }
+
   // Delete
   const [deleteConfirm, setDeleteConfirm] = useState('')
   const [deleteMsg, setDeleteMsg]         = useState('')
@@ -453,15 +471,27 @@ export default function AccountPage() {
                 </svg>
                 <span style={{ color: 'var(--c-text-1)' }}>Google</span>
               </div>
-              <span
-                className="text-[10px] px-2 py-0.5 rounded"
-                style={profile.google_linked
-                  ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
-                  : { color: 'var(--c-text-4)' }
-                }
-              >
-                {profile.google_linked ? 'Connected' : 'Not connected'}
-              </span>
+              <div className="flex items-center gap-2">
+                {!profile.google_linked && (
+                  <button
+                    onClick={() => handleConnect('google')}
+                    disabled={googleConnecting}
+                    className="text-[10px] px-2 py-1 rounded font-bold disabled:opacity-40"
+                    style={{ background: 'var(--c-accent)', color: '#000' }}
+                  >
+                    {googleConnecting ? 'Redirecting…' : 'Connect'}
+                  </button>
+                )}
+                <span
+                  className="text-[10px] px-2 py-0.5 rounded"
+                  style={profile.google_linked
+                    ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
+                    : { color: 'var(--c-text-4)' }
+                  }
+                >
+                  {profile.google_linked ? 'Connected' : 'Not connected'}
+                </span>
+              </div>
             </div>
 
             {/* GitHub */}
@@ -475,15 +505,27 @@ export default function AccountPage() {
                   <span style={{ color: 'var(--c-text-4)' }}>@{profile.github_login}</span>
                 )}
               </div>
-              <span
-                className="text-[10px] px-2 py-0.5 rounded"
-                style={profile.github_linked
-                  ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
-                  : { color: 'var(--c-text-4)' }
-                }
-              >
-                {profile.github_linked ? 'Connected' : 'Not connected'}
-              </span>
+              <div className="flex items-center gap-2">
+                {!profile.github_linked && (
+                  <button
+                    onClick={() => handleConnect('github')}
+                    disabled={githubConnecting}
+                    className="text-[10px] px-2 py-1 rounded font-bold disabled:opacity-40"
+                    style={{ background: 'var(--c-accent)', color: '#000' }}
+                  >
+                    {githubConnecting ? 'Redirecting…' : 'Connect'}
+                  </button>
+                )}
+                <span
+                  className="text-[10px] px-2 py-0.5 rounded"
+                  style={profile.github_linked
+                    ? { background: 'var(--c-accent-dim)', color: 'var(--c-accent)' }
+                    : { color: 'var(--c-text-4)' }
+                  }
+                >
+                  {profile.github_linked ? 'Connected' : 'Not connected'}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -511,7 +553,7 @@ export default function AccountPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs" style={{ color: 'var(--c-text-1)' }}>Credit low</span>
-                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Alert when balance drops below $2.50</p>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Alert when balance drops below 10%</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" className="sr-only peer"

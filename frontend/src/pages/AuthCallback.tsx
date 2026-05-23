@@ -35,7 +35,7 @@ export default function AuthCallback() {
         })
         .then(success => {
           if (success) {
-            navigate('/', { replace: false })
+            navigate('/', { replace: true })
           } else {
             navigate('/login?error=oauth_failed', { replace: true })
           }

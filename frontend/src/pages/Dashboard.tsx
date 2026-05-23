@@ -311,7 +311,7 @@ function CreateTab({ onLaunch }: { onLaunch: (cfg: { name: string; desc: string;
     if (!canSubmit) return
     onLaunch({
       name: name.trim(), desc: desc.trim(), icon: '⚡',
-      agents: Array.from(agents), autoStart: false,
+      agents: Array.from(agents), autoStart: true,
     })
   }
 
@@ -444,7 +444,7 @@ export function StatusBar({ tab, projectCount, creditPct }: { tab?: string; proj
 export default function Dashboard() {
   const authFetch = useAuthFetch()
   const navigate = useNavigate()
-  const { user } = useAuthContext()
+  const { user, logout } = useAuthContext()
   const [tab, setTab] = useState<'create' | 'projects'>('create')
   const [projects, setProjects] = useState<Project[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -799,7 +799,7 @@ export default function Dashboard() {
                 <span className="ic">📖</span> Docs
               </div>
               <div className="ap-sep" />
-              <div className="ap-row" style={{ color: 'var(--danger)' }} onClick={() => { setAccountOpen(false); setToast('sign out — placeholder') }}>
+              <div className="ap-row" style={{ color: 'var(--danger)' }} onClick={() => { setAccountOpen(false); logout(); navigate('/login', { replace: true }) }}>
                 <span className="ic">↗</span> Sign out
               </div>
             </div>
