@@ -33,6 +33,7 @@ const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
 function ThemedLayout({ children }: { children: React.ReactNode }) {
   const themeId = localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
   const theme = getTheme(themeId)
+  const { user } = useAuthContext()
 
   useEffect(() => {
     const root = document.documentElement
@@ -43,7 +44,7 @@ function ThemedLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
+      {user && themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
       {children}
     </>
   )
