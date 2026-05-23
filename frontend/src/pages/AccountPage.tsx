@@ -250,7 +250,8 @@ export default function AccountPage() {
       )}
 
       {!loading && profile && (
-        <div className="flex-1 overflow-y-auto px-6 py-8">
+        <div className="flex-1 overflow-y-auto flex justify-center items-start">
+        <div className="px-6 py-8 w-full" style={{ maxWidth: 780 }}>
 
           {/* ── Profile ── */}
           <SectionHeader title="Profile" />
@@ -562,6 +563,7 @@ export default function AccountPage() {
             <StatusMsg msg={deleteMsg} isError />
           </div>
 
+        </div>
         </div>
       )}
     </div>
