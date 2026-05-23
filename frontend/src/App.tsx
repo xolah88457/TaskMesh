@@ -48,34 +48,40 @@ function ThemedLayout({ children }: { children: React.ReactNode }) {
 // ── Route guards ───────────────────────────────────────────────────────────────
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user } = useAuthContext()
+  const { user, loading } = useAuthContext()
+  if (loading) return null
   if (!AUTH_DISABLED && !user) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
 // ── Onboarding gate ────────────────────────────────────────────────────────────
-// After login, if the user has no subscription, redirect to /billing so they
-// can choose a plan before accessing the main app.
-// Skipped entirely when AUTH_DISABLED=true (local dev).
+
+let _didBillingRedirect = false
 
 function BillingGate({ children }: { children: React.ReactNode }) {
   const authFetch  = useAuthFetch()
   const navigate   = useNavigate()
-  const [checked, setChecked] = useState(AUTH_DISABLED)  // skip check in dev
+  const { loading } = useAuthContext()
+  const [checked, setChecked] = useState(AUTH_DISABLED)
 
   useEffect(() => {
-    if (AUTH_DISABLED) return
+    if (AUTH_DISABLED || loading) return
     authFetch('/api/billing/usage')
       .then(r => r.json())
       .then((data: { plan: string }) => {
         if (data.plan === 'none') {
-          navigate('/billing', { replace: true })
+          if (_didBillingRedirect) {
+            setChecked(true)
+          } else {
+            _didBillingRedirect = true
+            navigate('/billing', { replace: true })
+          }
         } else {
           setChecked(true)
         }
       })
-      .catch(() => setChecked(true))   // on error, let the user in
-  }, [authFetch, navigate])
+      .catch(() => setChecked(true))
+  }, [authFetch, navigate, loading])
 
   if (!checked) return null   // brief flash while the check runs
   return <>{children}</>

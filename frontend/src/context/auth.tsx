@@ -20,18 +20,16 @@ interface AuthUser {
 interface AuthContextValue {
   user: AuthUser | null
   token: string | null
+  loading: boolean
   getToken: () => Promise<string | null>
   login: () => Promise<boolean>
   logout: () => void
 }
 
-// Auth token lives in an HttpOnly cookie (XSS-safe). The frontend never
-// reads the raw JWT — it fetches /api/auth/me to get the current user.
-// getToken() returns null because the token is only in the cookie.
-
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   token: null,
+  loading: false,
   getToken: async () => null,
   login: async () => false,
   logout: () => {},
@@ -45,18 +43,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return null
   })
 
+  const [loading, setLoading] = useState(!AUTH_DISABLED)
+
   const [token, setToken] = useState<string | null>(() => {
     if (AUTH_DISABLED) return 'dev-token'
     return null
   })
 
-  // Fetch authenticated user from server on mount
   useEffect(() => {
     if (AUTH_DISABLED) return
     fetch('/api/auth/me')
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(u => setUser({ id: u.id, email: u.email ?? '', name: u.name ?? '' }))
       .catch(() => setUser(null))
+      .finally(() => setLoading(false))
   }, [])
 
   const login = useCallback(async (): Promise<boolean> => {
@@ -87,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, getToken, login, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, getToken, login, logout }}>
       {children}
     </AuthContext.Provider>
   )

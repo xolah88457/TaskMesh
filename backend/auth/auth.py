@@ -58,22 +58,18 @@ def _cookie_samesite() -> str:
 def set_token_cookie(
     response: Response,
     token: str,
-    max_age_days: int | None = _TOKEN_DAYS,
+    max_age_days: int | None = None,
     remember_me: bool = False,
 ) -> None:
     """Set the JWT in an HttpOnly cookie.
 
     When *remember_me* is False, the cookie is a session cookie (no max_age)
     and is deleted when the browser closes. When True, the cookie expires
-    after 7 days (MAX_REMEMBER_DAYS).
+    after 7 days.
 
     SameSite is configurable for split-origin deployments — see _cookie_samesite()."""
     samesite = _cookie_samesite()
-    # Secure=True required for cookies to persist across browser restarts
-    # over HTTPS. Disable only in explicit local development (AUTH_DISABLED).
     secure = not AUTH_DISABLED or os.environ.get("ENVIRONMENT") == "production" or samesite == "none"
-    # Session cookie: no max_age/expires → deleted when browser closes
-    # Remember-me: 7-day cookie
     max_days: int | None = None
     if remember_me:
         max_days = 7
