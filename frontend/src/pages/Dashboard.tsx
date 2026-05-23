@@ -478,13 +478,8 @@ export default function Dashboard() {
           tokens: '0K',
         }))
         setProjects(prev => mapped.length > 0 ? mapped : prev)
-        // If we came from creation, highlight the active project
-        if (activeId) {
-          const exists = mapped.find(p => p.id === activeId)
-          if (exists) setTab('projects')
-        }
       })
-      .catch(() => {})
+      .catch(() => setToast('Failed to load projects'))
     authFetch('/api/billing/usage')
       .then(r => r.json())
       .then(setUsage)
