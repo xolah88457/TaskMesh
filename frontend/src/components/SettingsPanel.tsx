@@ -580,9 +580,10 @@ interface Props {
   open: boolean
   onClose: () => void
   onSaved: (agents: AgentCfg[]) => void
+  initial?: { projectName?: string; projectDesc?: string; projectAgents?: string[] } | null
 }
 
-export default function SettingsPanel({ open, onClose, onSaved }: Props) {
+export default function SettingsPanel({ open, onClose, onSaved, initial }: Props) {
   const [cfg, setCfg] = useState<Config>(DEFAULT_CONFIG)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -596,7 +597,7 @@ export default function SettingsPanel({ open, onClose, onSaved }: Props) {
     authFetch('/api/config')
       .then(r => r.json())
       .then(data => setCfg({
-        sprint:   data.sprint   ?? 'Sprint #1',
+        sprint:   initial?.projectName || (data.sprint ?? 'Sprint #1'),
         provider: { name: 'OpenCode Zen', baseURL: 'https://opencode.ai/zen/v1', ...data.provider },
         agents:   (data.agents ?? []).map((a: AgentCfg) => {
           const preset = AGENT_PRESETS.find(p => p.id === a.id)

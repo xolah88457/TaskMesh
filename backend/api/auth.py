@@ -307,11 +307,10 @@ async def _google_callback_impl(request: Request, code: str, state: str) -> Redi
 
     jwt_token = create_token(user_id, email, name)
     # Pass JWT in URL hash so it never hits a server log.
-    # The HttpOnly cookie is set alongside for XSS-safe auth.
-    # OAuth always remembers (7-day cookie) — standard for social login.
+    # The cookie is set via POST /api/auth/exchange in a separate step
+    # (not on the redirect) to avoid Set-Cookie being stripped by proxies.
     frontend_url = _get_frontend_url(request)
     response = RedirectResponse(f"{frontend_url}/auth/callback#{jwt_token}")
-    set_token_cookie(response, jwt_token, remember_me=True)
     # Clear the one-shot anti-CSRF state cookie now that it's been verified.
     # (GitHub callback already does this; Google was leaving it behind.)
     response.delete_cookie("oauth_state", path="/api/auth")
@@ -466,9 +465,35 @@ async def _github_callback_impl(request: Request, code: str, state: str) -> Redi
     jwt_token = create_token(user_id, email, name)
     frontend_url = _get_frontend_url(request)
     response = RedirectResponse(f"{frontend_url}/auth/callback#{jwt_token}")
-    set_token_cookie(response, jwt_token, remember_me=True)
     response.delete_cookie("oauth_state", path="/api/auth")
     return response
+
+
+@router.post("/exchange")
+async def exchange_token(request: Request):
+    """Exchange a JWT (from OAuth callback hash or login response) for an HttpOnly cookie.
+
+    The JWT is passed in the JSON body. This endpoint sets the cookie on a
+    regular JSON response rather than a redirect, avoiding Set-Cookie being
+    stripped or mangled by proxies like Vercel rewrites.
+
+    OAuth tokens always get a 7-day remember-me cookie.
+    """
+    from ..auth.auth import _verify_token, set_token_cookie, _TOKEN_DAYS
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    jwt_str = body.get("token", "")
+    if not jwt_str:
+        raise HTTPException(status_code=400, detail="Missing token")
+    try:
+        claims = _verify_token(jwt_str)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    resp = JSONResponse({"id": claims.get("sub", ""), "email": claims.get("email", ""), "name": claims.get("name", "")})
+    set_token_cookie(resp, jwt_str, remember_me=body.get("remember_me", True))
+    return resp
 
 
 @router.get("/me")

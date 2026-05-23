@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import MatrixRain from './components/MatrixRain'
 import HealthBanner from './components/HealthBanner'
 import Header from './components/Header'
@@ -85,6 +85,8 @@ function BillingGate({ children }: { children: React.ReactNode }) {
 
 function Workspace() {
   const { state, startProject, cancelProject } = useSocket()
+  const location = useLocation()
+  const navState = location.state as { projectName?: string; projectDesc?: string; projectAgents?: string[] } | null
   const [settingsOpen, setSettingsOpen]     = useState(false)
   const [sidebarWidth, setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
   const [activityHeight, setActivityHeight] = useState(ACTIVITY_DEFAULT)
@@ -101,6 +103,14 @@ function Workspace() {
   const creditPct = usage
     ? Math.min(100, Math.round((usage.balance_cents / ((usage.plan === 'pro' ? 4800 : usage.plan === 'starter' ? 1500 : 1))) * 100))
     : 0
+
+  // Auto-open settings when navigating from Dashboard with project config
+  useEffect(() => {
+    if (navState?.projectName) {
+      setSettingsOpen(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const onSidebarDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -201,6 +211,7 @@ function Workspace() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={() => {}}
+        initial={navState}
       />
     </div>
     </>

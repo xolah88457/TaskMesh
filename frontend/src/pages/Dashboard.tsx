@@ -311,7 +311,7 @@ function CreateTab({ onLaunch }: { onLaunch: (cfg: { name: string; desc: string;
     if (!canSubmit) return
     onLaunch({
       name: name.trim(), desc: desc.trim(), icon: '⚡',
-      agents: Array.from(agents), autoStart: true,
+      agents: Array.from(agents), autoStart: false,
     })
   }
 
@@ -550,9 +550,16 @@ export default function Dashboard() {
       setToast(`launched ${cfg.name}`)
       navigate(`/project/${d.run_id}`)
     } else {
+      // No run started — navigate to workspace with project settings via state
       setActiveId(d.project_id)
-      setTab('projects')
-      setToast(`created ${cfg.name}`)
+      setToast(`loading ${cfg.name}...`)
+      navigate(`/project/${d.project_id}`, {
+        state: {
+          projectName: cfg.name,
+          projectDesc: cfg.desc,
+          projectAgents: cfg.agents,
+        },
+      })
     }
 
     authFetch('/api/projects')

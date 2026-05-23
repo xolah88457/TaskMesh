@@ -4,10 +4,12 @@ import { useAuthContext } from '../context/auth'
 
 /**
  * Landing page for Google/GitHub OAuth redirect.
+ *
  * The backend redirects here as: /auth/callback#<jwt>
- * The JWT in the hash confirms OAuth succeeded. Auth is handled
- * server-side via HttpOnly cookie — the frontend only needs to
- * refresh the user display from /api/auth/me.
+ * We POST the JWT to /api/auth/exchange, which sets the HttpOnly
+ * cookie on a regular JSON response (not a redirect, avoiding
+ * Set-Cookie issues with Vercel proxy). Then we call login() to
+ * refresh user state from /api/auth/me.
  */
 export default function AuthCallback() {
   const { login }  = useAuthContext()
@@ -20,14 +22,27 @@ export default function AuthCallback() {
 
     const token = window.location.hash.slice(1)  // strip leading '#'
     if (token) {
-      login().then(success => {
-        window.history.replaceState(null, '', '/auth/callback')  // clear hash from URL
-        if (success) {
-          navigate('/', { replace: true })
-        } else {
-          navigate('/login?error=oauth_failed', { replace: true })
-        }
+      // Exchange JWT for HttpOnly cookie
+      fetch('/api/auth/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, remember_me: true }),
       })
+        .then(r => {
+          if (!r.ok) throw r.status
+          window.history.replaceState(null, '', '/auth/callback')
+          return login()
+        })
+        .then(success => {
+          if (success) {
+            navigate('/', { replace: true })
+          } else {
+            navigate('/login?error=oauth_failed', { replace: true })
+          }
+        })
+        .catch(() => {
+          navigate('/login?error=oauth_failed', { replace: true })
+        })
     } else {
       // No token — something went wrong with the OAuth flow
       navigate('/login?error=oauth_failed', { replace: true })
