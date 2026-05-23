@@ -89,6 +89,7 @@ def set_token_cookie(
     )
     if max_days is not None:
         cookie_kwargs["max_age"] = max_days * 86400
+        cookie_kwargs["expires"] = (datetime.now(timezone.utc) + timedelta(days=max_days)).strftime("%a, %d %b %Y %H:%M:%S GMT")
     response.set_cookie(**cookie_kwargs)
 
 

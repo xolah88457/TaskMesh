@@ -500,7 +500,12 @@ export default function AccountPage() {
                   <input type="checkbox" className="sr-only peer"
                     checked={notifications.subscription_started}
                     onChange={e => toggleNotif('subscription_started', e.target.checked)} />
-                  <div className="w-8 h-4.5 rounded-full peer bg-[var(--c-surface-3)] peer-checked:bg-[var(--c-accent)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:after:translate-x-4" />
+                  <div className="w-9 h-5 rounded-full border transition-colors
+                    peer-checked:bg-[var(--c-accent)] peer-checked:border-[var(--c-accent)]
+                    bg-[var(--c-surface-3)] border-[var(--c-border)]
+                    after:content-[''] after:absolute after:top-[2px] after:left-[2px]
+                    after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform
+                    after:shadow-sm peer-checked:after:translate-x-4" />
                 </label>
               </div>
               <div className="flex items-center justify-between">
@@ -512,7 +517,12 @@ export default function AccountPage() {
                   <input type="checkbox" className="sr-only peer"
                     checked={notifications.credit_low}
                     onChange={e => toggleNotif('credit_low', e.target.checked)} />
-                  <div className="w-8 h-4.5 rounded-full peer bg-[var(--c-surface-3)] peer-checked:bg-[var(--c-accent)] after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:after:translate-x-4" />
+                  <div className="w-9 h-5 rounded-full border transition-colors
+                    peer-checked:bg-[var(--c-accent)] peer-checked:border-[var(--c-accent)]
+                    bg-[var(--c-surface-3)] border-[var(--c-border)]
+                    after:content-[''] after:absolute after:top-[2px] after:left-[2px]
+                    after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform
+                    after:shadow-sm peer-checked:after:translate-x-4" />
                 </label>
               </div>
             </div>

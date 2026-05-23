@@ -296,7 +296,7 @@ function ProjectsTab({ projects, activeId, onOpen, onDelete, onChangeStatus, que
 function CreateTab({ onLaunch }: { onLaunch: (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => void }) {
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
-  const [agents, setAgents] = useState(new Set(['manager', 'webdev', 'backend', 'frontend', 'tester']))
+  const [agents, setAgents] = useState(new Set(['manager']))
 
   const toggleAgent = (id: string) => {
     if (id === 'manager') return
@@ -305,13 +305,13 @@ function CreateTab({ onLaunch }: { onLaunch: (cfg: { name: string; desc: string;
     setAgents(next)
   }
 
-  const canSubmit = name.trim().length >= 2 && desc.trim().length >= 8 && agents.size >= 2
+  const canSubmit = name.trim().length >= 2 && desc.trim().length >= 8 && agents.size >= 1
 
   const submit = () => {
     if (!canSubmit) return
     onLaunch({
       name: name.trim(), desc: desc.trim(), icon: '⚡',
-      agents: Array.from(agents), autoStart: false,
+      agents: Array.from(agents), autoStart: true,
     })
   }
 
@@ -715,7 +715,12 @@ export default function Dashboard() {
       <div className="app no-rail-mode">
         <div className="topbar">
         <div className="crumbs">
-          <div className="logo">tm</div>
+          <div className="logo">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" style={{ width: '100%', height: '100%' }}>
+              <rect x="3" y="3" width="58" height="58" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1"/>
+              <text x="32" y="42" textAnchor="middle" fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="700" fontSize="34" letterSpacing="-1.5" fill="currentColor">tm</text>
+            </svg>
+          </div>
           <span className="seg">src</span>
           <span className="sep">›</span>
           <span className="seg active">dashboard</span>
