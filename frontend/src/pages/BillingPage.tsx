@@ -46,10 +46,45 @@ const PLANS = [
   },
 ] as const
 
-const PACKS = [
-  { id: 'pack_s', label: '$20 purchase',  subLabel: undefined, cents: 1000, bonusText: undefined },
-  { id: 'pack_m', label: '$50 purchase',  subLabel: undefined, cents: 2750, bonusText: '+5% more credits' },
-  { id: 'pack_l', label: '$100 purchase', subLabel: undefined, cents: 6000, bonusText: '+10% more credits' },
+const PRO_FEATURES = [
+  'All agents per run',
+  'All models including flagship',
+  'File output to disk',
+  'Run history + downloads',
+  'Unlimited runs (credit permitting)',
+  'Shared agent config',
+  'GitHub push after run',
+  'Priority support',
+] as const
+
+const PACK_CARDS = [
+  {
+    id: 'pack_s',
+    name: 'Pack S',
+    price: '$20',
+    period: 'one-time',
+    features: [...PRO_FEATURES],
+    cta: 'Buy — $20',
+    bonusText: undefined,
+  },
+  {
+    id: 'pack_m',
+    name: 'Pack M',
+    price: '$50',
+    period: 'one-time',
+    features: [...PRO_FEATURES],
+    cta: 'Buy — $50',
+    bonusText: '+5% more credits',
+  },
+  {
+    id: 'pack_l',
+    name: 'Pack L',
+    price: '$100',
+    period: 'one-time',
+    features: [...PRO_FEATURES],
+    cta: 'Buy — $100',
+    bonusText: '+10% more credits',
+  },
 ] as const
 
 function BalanceBar({ balanceCents, allocatedCents }: { balanceCents: number; allocatedCents: number }) {
@@ -283,25 +318,49 @@ export default function BillingPage() {
 
           {/* Credit packs */}
           <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: 'var(--c-text-3)' }}>Top up credits</h2>
-          <div className="flex flex-wrap gap-3">
-            {PACKS.map(pack => (
-              <button
+          <div className="grid gap-3 mb-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+            {PACK_CARDS.map(pack => (
+              <div
                 key={pack.id}
-                onClick={() => checkout(pack.id)}
-                disabled={!!checkingOut || currentPlan === 'none'}
-                className="flex flex-col items-center px-5 py-3 rounded border text-xs font-bold disabled:opacity-40 transition-colors"
-                style={{ borderColor: 'var(--c-border)', background: 'var(--c-surface-2)', color: 'var(--c-text-1)' }}
-                onMouseEnter={e => { if (!checkingOut) (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--c-accent-border)' }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--c-border)' }}
-                title={currentPlan === 'none' ? 'Requires an active subscription' : undefined}
+                className="rounded border flex flex-col overflow-hidden"
+                style={{ borderColor: 'var(--c-border)' }}
               >
-                <span style={{ color: 'var(--c-accent)', fontSize: 14 }}>{checkingOut === pack.id ? '…' : pack.label}</span>
-                {pack.bonusText && (
-                  <span className="text-[9px] font-bold mt-1 px-1.5 py-0.5 rounded" style={{ background: 'var(--c-accent-dim)', color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
-                    {pack.bonusText}
-                  </span>
-                )}
-              </button>
+                {/* Card header */}
+                <div
+                  className="flex items-baseline gap-2 px-4 py-3 border-b"
+                  style={{ background: 'var(--c-surface-2)', borderColor: 'var(--c-border)' }}
+                >
+                  <span className="text-sm font-bold" style={{ color: 'var(--c-text-1)' }}>{pack.name}</span>
+                  <span className="text-xl font-bold" style={{ color: 'var(--c-accent)' }}>{pack.price}</span>
+                  <span className="text-xs" style={{ color: 'var(--c-text-4)' }}>{pack.period}</span>
+                  {pack.bonusText && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'var(--c-accent-dim)', color: 'var(--c-accent)', border: '1px solid var(--c-accent-border)' }}>
+                      {pack.bonusText}
+                    </span>
+                  )}
+                </div>
+                {/* Features */}
+                <ul className="flex-1 px-4 py-3 space-y-1.5" style={{ background: 'var(--c-surface-1)' }}>
+                  {pack.features.map(f => (
+                    <li key={f} className="text-xs flex items-start gap-2" style={{ color: 'var(--c-text-2)' }}>
+                      <span style={{ color: 'var(--c-accent)', flexShrink: 0, marginTop: 1 }}>✓</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                {/* CTA */}
+                <div className="px-4 py-3" style={{ background: 'var(--c-surface-1)', borderTop: '1px solid var(--c-border)' }}>
+                  <button
+                    onClick={() => checkout(pack.id)}
+                    disabled={!!checkingOut || currentPlan === 'none'}
+                    className="w-full text-xs py-2 rounded font-bold transition-opacity disabled:opacity-40"
+                    style={{ background: 'var(--c-accent)', color: '#000' }}
+                    title={currentPlan === 'none' ? 'Requires an active subscription' : undefined}
+                  >
+                    {checkingOut === pack.id ? 'Opening checkout…' : pack.cta}
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
           {currentPlan === 'none' && !loading && (

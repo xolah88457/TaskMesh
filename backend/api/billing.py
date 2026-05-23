@@ -507,7 +507,7 @@ async def _handle_cancellation(event: dict) -> None:
 
 
 async def _handle_transaction_completed(event: dict) -> None:
-    """One-time credit pack purchase."""
+    """One-time credit pack purchase. Pack buyers get Pro-level access."""
     pack_map = _build_pack_credits()
     if not pack_map:
         return
@@ -524,5 +524,5 @@ async def _handle_transaction_completed(event: dict) -> None:
         price_id = item.get("price", {}).get("id", "")
         credits  = pack_map.get(price_id, 0)
         if credits > 0:
-            await _upsert_credits(user_id=user_id, add_cents=credits)
+            await _upsert_credits(user_id=user_id, plan="pro", add_cents=credits)
             break  # one pack per transaction
