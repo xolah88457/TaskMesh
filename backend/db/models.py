@@ -2,10 +2,11 @@
 SQLAlchemy ORM models for Agent Team.
 
 Tables:
-  users      — registered users (email/password or Google OAuth)
-  runs       — one row per pipeline execution
-  run_files  — one row per [FILE: path] written during a run
-  user_usage — monthly run counts per user ID (for billing gates)
+  users       — registered users (email/password or Google OAuth)
+  projects    — user-created project workspaces
+  runs        — one row per pipeline execution
+  run_files   — one row per [FILE: path] written during a run
+  user_usage  — monthly run counts per user ID (for billing gates)
   user_github — GitHub OAuth tokens per user
 """
 from datetime import datetime, timezone
