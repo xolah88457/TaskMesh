@@ -7,7 +7,8 @@ import AgentNetwork from './components/AgentNetwork'
 import Sidebar from './components/Sidebar'
 import LiveActivity from './components/LiveActivity'
 import SettingsPanel from './components/SettingsPanel'
-import Dashboard from './pages/Dashboard'
+import Dashboard, { StatusBar } from './pages/Dashboard'
+import type { Usage } from './pages/Dashboard'
 import BillingPage from './pages/BillingPage'
 import AccountPage from './pages/AccountPage'
 import LoginPage from './pages/LoginPage'
@@ -87,6 +88,19 @@ function Workspace() {
   const [settingsOpen, setSettingsOpen]     = useState(false)
   const [sidebarWidth, setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
   const [activityHeight, setActivityHeight] = useState(ACTIVITY_DEFAULT)
+  const [usage, setUsage] = useState<Usage | null>(null)
+  const authFetch = useAuthFetch()
+
+  useEffect(() => {
+    authFetch('/api/billing/usage')
+      .then(r => r.json())
+      .then(setUsage)
+      .catch(() => {})
+  }, [])
+
+  const creditPct = usage
+    ? Math.min(100, Math.round((usage.balance_cents / ((usage.plan === 'pro' ? 4800 : usage.plan === 'starter' ? 1500 : 1))) * 100))
+    : 0
 
   const onSidebarDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -180,6 +194,8 @@ function Workspace() {
         />
         <LiveActivity log={state.log} agents={state.agents} />
       </div>
+
+      <StatusBar projectCount={1} creditPct={creditPct} />
 
       <SettingsPanel
         open={settingsOpen}

@@ -24,7 +24,7 @@ interface Project {
   tokens: string
 }
 
-interface Usage {
+export interface Usage {
   plan: 'none' | 'starter' | 'pro'
   balance_cents: number
   updated_at?: string | null
@@ -414,16 +414,16 @@ function ActivityFeed({ items }: { items: { time: string; who: string; proj: str
 
 // ── Status Bar ──────────────────────────────────────────────────────────────────
 
-function StatusBar({ tab, projectCount, creditPct }: { tab: string; projectCount: number; creditPct: number }) {
+export function StatusBar({ tab, projectCount, creditPct }: { tab?: string; projectCount: number; creditPct: number }) {
   return (
     <div className="statusbar">
       <span className="sb-item accent"><span className="status-dot running" /> connected</span>
       <span className="sb-item">tm@v0.42.1</span>
       <span className="sb-item">us-east-1</span>
       <span className="spacer" />
-      <span className="sb-item">tab: {tab}</span>
+      {tab && <span className="sb-item">tab: {tab}</span>}
       <span className="sb-item">{projectCount} projects</span>
-      <span className="sb-item">credits ${(creditPct / 100).toFixed(0)}</span>
+      <span className="sb-item">credits {creditPct}%</span>
       <span className="sb-item" style={{ color: 'var(--text-mute)' }}>⌘K cmds</span>
     </div>
   )
@@ -557,7 +557,7 @@ export default function Dashboard() {
     }
   }
 
-  const creditPct = usage ? usage.balance_cents : 0
+  const creditPct = usage ? Math.min(100, Math.round((usage.balance_cents / ((usage.plan === 'pro' ? 4800 : usage.plan === 'starter' ? 1500 : 1))) * 100)) : 0
 
   // Build alerts from running projects
   const alerts = useMemo(() => {
