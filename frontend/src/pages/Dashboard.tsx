@@ -502,49 +502,93 @@ export default function Dashboard() {
   }
 
   const launchNew = async (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => {
-    const newId = 'p_' + Math.random().toString(36).slice(2, 8)
-    // Add to local projects list immediately
-    const newProj: Project = {
-      id: newId,
-      name: cfg.name,
-      desc: cfg.desc,
-      path: '~/projects/' + cfg.name,
-      icon: cfg.icon,
-      color: 'var(--c-cyan)',
-      status: 'ready',
-      progress: 0,
-      agents: cfg.agents.length,
-      files: 0,
-      lastActive: 'just now',
-      lastActiveSort: 0,
-      created: 'just now',
-      tokens: '0K',
-    }
-    setProjects([newProj, ...projects])
-    setActiveId(newProj.id)
-    setTab('projects')
-    setToast(`launching ${cfg.name}…`)
+    setToast(`launching ${cfg.name}...`)
 
-    // Call backend to start the project
     try {
-      const r = await authFetch('/api/start-project', {
+      const r = await authFetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brief: cfg.desc, name: cfg.name }),
+        body: JSON.stringify({
+          name: cfg.name,
+          brief: cfg.desc,
+          icon: cfg.icon,
+          agents: cfg.agents,
+          auto_start: cfg.autoStart,
+        }),
       })
       const d = await r.json()
-      if (r.ok && (d.run_id || d.id)) {
-        const runId = d.run_id || d.id
-        setProjects(prev => prev.map(p => p.id === newId ? { ...p, id: runId, status: 'running' } : p))
-        setActiveId(runId)
-        navigate(`/project/${runId}`)
-      } else {
-        setToast(`launched ${cfg.name}`)
-        navigate(`/project/${newId}`)
+
+      if (!r.ok) {
+        if (d.error === 'no_subscription') {
+          setToast('You need a subscription to start projects')
+          navigate('/billing')
+          return
+        }
+        if (d.error === 'no_credits') {
+          setToast('No credits remaining. Top up?')
+          navigate('/billing')
+          return
+        }
+        setToast(d.error || 'Failed to start project')
+        return
       }
+
+      if (d.run_id) {
+        setActiveId(d.project_id)
+        setToast(`launched ${cfg.name}`)
+        navigate(`/project/${d.run_id}`)
+      } else {
+        setActiveId(d.project_id)
+        setTab('projects')
+        setToast(`created ${cfg.name}`)
+      }
+
+      authFetch('/api/projects')
+        .then(r => r.json())
+        .then((resp: { projects?: ApiProject[] }) => {
+          setProjects(() => {
+            const mapped: Project[] = (resp.projects ?? []).map(p => ({
+              id: p.id,
+              name: p.name,
+              desc: p.desc || '',
+              path: `~/projects/${p.slug}`,
+              icon: p.icon || '📁',
+              color: 'var(--c-cyan)',
+              status: 'ready' as Project['status'],
+              progress: 0,
+              agents: cfg.agents.length,
+              files: 0,
+              lastActive: 'just now',
+              lastActiveSort: Date.now(),
+              created: 'just now',
+              tokens: '0K',
+            }))
+            const ids = new Set(mapped.map(p => p.id))
+            const merged = mapped.slice()
+            if (!ids.has(d.project_id)) {
+              merged.unshift({
+                id: d.project_id,
+                name: cfg.name,
+                desc: cfg.desc,
+                path: `~/projects/${d.slug || ''}`,
+                icon: cfg.icon,
+                color: 'var(--c-cyan)',
+                status: cfg.autoStart ? 'running' : 'ready',
+                progress: 0,
+                agents: cfg.agents.length,
+                files: 0,
+                lastActive: 'just now',
+                lastActiveSort: 0,
+                created: 'just now',
+                tokens: '0K',
+              })
+            }
+            return merged
+          })
+        })
+        .catch(() => setToast('project started, could not refresh list'))
     } catch {
-      setToast(`launched ${cfg.name}`)
-      navigate(`/project/${newId}`)
+      setToast('Could not start project. Try again.')
     }
   }
 
