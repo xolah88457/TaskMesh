@@ -65,7 +65,7 @@ function CreditWidget({ usage }: { usage: Usage | null }) {
         <div className="credit-bar-fill" style={{ width: pct + '%' }} />
       </div>
       <div className="credit-meta">
-        <span>{plan === 'pro' ? 'Pro' : plan === 'starter' ? 'Starter' : 'No'} plan · ${ (balance / 100).toFixed(0)} of ${ (allocated / 100).toFixed(0)}</span>
+        <span>{plan === 'pro' ? 'Pro' : plan === 'starter' ? 'Starter' : 'No'} plan · ${(balance / 100).toFixed(0)} credits</span>
         {updated && (
           <span style={{ color: 'var(--text-dim)', marginLeft: 'auto' }}>{updated}</span>
         )}
