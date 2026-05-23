@@ -422,11 +422,11 @@ async def get_config(user: dict = Depends(require_auth)):
              "agents": config.agents}
 
 
-async def _load_user_config(user_id: str) -> ProjectConfig:
+async def _load_user_config(user_id: str, project_name: str | None = None) -> ProjectConfig:
     """Load per-user config from DB, falling back to disk file."""
     from ..db.session import get_session
     from ..db.models import User
-    from ..core.config_loader import DEFAULT_AGENTS, ProviderConfig, ProjectConfig
+    from ..core.config_loader import DEFAULT_AGENTS, ProviderConfig, ProjectConfig, load_config
     sprint = "Sprint #1"
     agents = [a.copy() for a in DEFAULT_AGENTS]
     provider = ProviderConfig()
@@ -448,20 +448,8 @@ async def _load_user_config(user_id: str) -> ProjectConfig:
     if all_agents_default(agents):
         config_path = Path(os.getcwd()) / "agent-team.config.json"
         if config_path.exists():
-            try:
-                data = json.loads(config_path.read_text())
-                sprint = data.get("sprint", sprint)
-                if isinstance(data.get("agents"), list) and data["agents"]:
-                    agents = data["agents"]
-                if isinstance(data.get("provider"), dict):
-                    p = data["provider"]
-                    provider = ProviderConfig(
-                        name=p.get("name", provider.name),
-                        baseURL=p.get("baseURL", provider.baseURL),
-                        apiKey=p.get("apiKey", provider.apiKey),
-                    )
-            except (json.JSONDecodeError, OSError):
-                pass
+            config = load_config(str(config_path), project_name=project_name)
+            return config
     if not provider.apiKey:
         provider.apiKey = os.environ.get("OPENCODE_GO_API_KEY", "")
     mgr = next((a for a in agents if a.get("id") == "manager"), DEFAULT_AGENTS[0].copy())

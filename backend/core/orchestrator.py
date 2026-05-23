@@ -815,6 +815,8 @@ class Orchestrator:
         api_key: str = "",
         upload_dir: str = "",
         run_id: str = "",
+        selected_agents: list[str] | None = None,
+        project_id: str | None = None,
     ) -> None:
         self._run_task = asyncio.current_task()
         self._current_user_id = user_id
@@ -840,6 +842,8 @@ class Orchestrator:
         self._stage_artifacts.clear()
         self._rework_iteration = 0
         self._manifest_cached = False
+        self._selected_agents = selected_agents
+        self._project_id = project_id
 
         # Check for interrupted runs from a prior process
         asyncio.create_task(self._check_resumable(user_id, self._run_id))
@@ -847,7 +851,14 @@ class Orchestrator:
         # Persist run start + increment usage counter
         async with get_session() as session:
             if session is not None:
-                session.add(Run(id=run_id, user_id=user_id, brief=brief, status="running"))
+                session.add(Run(
+                    id=run_id,
+                    user_id=user_id,
+                    brief=brief,
+                    status="running",
+                    project_id=getattr(self, '_project_id', None),
+                    selected_agents=json.dumps(self._selected_agents) if getattr(self, '_selected_agents', None) else None,
+                ))
                 usage = await session.get(UserUsage, (user_id, year_month))
                 if usage is None:
                     session.add(UserUsage(user_id=user_id, year_month=year_month, run_count=1))
@@ -948,6 +959,11 @@ class Orchestrator:
         # Identify agents by role — planners do Stages 1-2, executors do Stage 3.
         _REVIEWER_ROLES = {"reviewer", "code reviewer", "code review"}
         all_agents = self.config.agents
+        selected = getattr(self, '_selected_agents', None)
+        if selected:
+            selected_set = set(selected)
+            selected_set.add("manager")
+            all_agents = [a for a in all_agents if a.get("id") in selected_set]
 
         planners = [
             a for a in all_agents
