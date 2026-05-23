@@ -69,7 +69,9 @@ def set_token_cookie(
 
     SameSite is configurable for split-origin deployments — see _cookie_samesite()."""
     samesite = _cookie_samesite()
-    secure = os.environ.get("ENVIRONMENT") == "production" or samesite == "none"
+    # Secure=True required for cookies to persist across browser restarts
+    # over HTTPS. Disable only in explicit local development (AUTH_DISABLED).
+    secure = not AUTH_DISABLED or os.environ.get("ENVIRONMENT") == "production" or samesite == "none"
     # Session cookie: no max_age/expires → deleted when browser closes
     # Remember-me: 7-day cookie
     max_days: int | None = None

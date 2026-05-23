@@ -352,10 +352,9 @@ export default function BillingPage() {
                 <div className="px-4 py-3" style={{ background: 'var(--c-surface-1)', borderTop: '1px solid var(--c-border)' }}>
                   <button
                     onClick={() => checkout(pack.id)}
-                    disabled={!!checkingOut || currentPlan === 'none'}
-                    className="w-full text-xs py-2 rounded font-bold transition-opacity disabled:opacity-40"
+                    disabled={!!checkingOut}
+                    className="w-full text-xs py-2 rounded font-bold transition-opacity disabled:opacity-50"
                     style={{ background: 'var(--c-accent)', color: '#000' }}
-                    title={currentPlan === 'none' ? 'Requires an active subscription' : undefined}
                   >
                     {checkingOut === pack.id ? 'Opening checkout…' : pack.cta}
                   </button>
@@ -363,9 +362,6 @@ export default function BillingPage() {
               </div>
             ))}
           </div>
-          {currentPlan === 'none' && !loading && (
-            <p className="mt-2 text-[10px]" style={{ color: 'var(--c-text-4)' }}>An active subscription is required to top up credits.</p>
-          )}
 
           {/* Admin bypass — invisible trigger */}
           <div className="mt-16 flex justify-end">

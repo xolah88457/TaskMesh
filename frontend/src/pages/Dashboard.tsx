@@ -467,15 +467,17 @@ export default function Dashboard() {
     navigate(`/project/${p.id}`)
   }
 
-  const launchNew = (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => {
+  const launchNew = async (cfg: { name: string; desc: string; icon: string; agents: string[]; autoStart: boolean }) => {
+    const newId = 'p_' + Math.random().toString(36).slice(2, 8)
+    // Add to local projects list immediately
     const newProj: Project = {
-      id: 'p_' + Math.random().toString(36).slice(2, 8),
+      id: newId,
       name: cfg.name,
       desc: cfg.desc,
       path: '~/projects/' + cfg.name,
       icon: cfg.icon,
       color: 'var(--c-cyan)',
-      status: cfg.autoStart ? 'running' : 'ready',
+      status: 'ready',
       progress: 0,
       agents: cfg.agents.length,
       files: 0,
@@ -486,7 +488,30 @@ export default function Dashboard() {
     }
     setProjects([newProj, ...projects])
     setActiveId(newProj.id)
-    navigate(`/project/${newProj.id}`)
+    setTab('projects')
+    setToast(`launching ${cfg.name}…`)
+
+    // Call backend to start the project
+    try {
+      const r = await authFetch('/api/start-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief: cfg.desc, name: cfg.name }),
+      })
+      const d = await r.json()
+      if (r.ok && (d.run_id || d.id)) {
+        const runId = d.run_id || d.id
+        setProjects(prev => prev.map(p => p.id === newId ? { ...p, id: runId, status: 'running' } : p))
+        setActiveId(runId)
+        navigate(`/project/${runId}`)
+      } else {
+        setToast(`launched ${cfg.name}`)
+        navigate(`/project/${newId}`)
+      }
+    } catch {
+      setToast(`launched ${cfg.name}`)
+      navigate(`/project/${newId}`)
+    }
   }
 
   const confirmDelete = (p: Project) => setDeleteTarget(p)

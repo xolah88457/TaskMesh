@@ -28,6 +28,27 @@ const ACTIVITY_DEFAULT = 88
 
 const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
 
+// ── Theme-aware wrapper with Matrix rain on all pages ──────────────────────
+
+function ThemedLayout({ children }: { children: React.ReactNode }) {
+  const themeId = localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
+  const theme = getTheme(themeId)
+
+  useEffect(() => {
+    const root = document.documentElement
+    Object.entries(theme.vars).forEach(([key, value]) => {
+      root.style.setProperty(key, value)
+    })
+  }, [theme])
+
+  return (
+    <>
+      {themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
+      {children}
+    </>
+  )
+}
+
 // ── Route guards ───────────────────────────────────────────────────────────────
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -72,17 +93,6 @@ function Workspace() {
   const [sidebarWidth, setSidebarWidth]     = useState(SIDEBAR_DEFAULT)
   const [activityHeight, setActivityHeight] = useState(ACTIVITY_DEFAULT)
 
-  // Apply theme CSS variables on mount
-  const themeId = localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
-  const theme = getTheme(themeId)
-
-  useEffect(() => {
-    const root = document.documentElement
-    Object.entries(theme.vars).forEach(([key, value]) => {
-      root.style.setProperty(key, value)
-    })
-  }, [theme])
-
   const onSidebarDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     const startX = e.clientX
@@ -119,8 +129,6 @@ function Workspace() {
 
   return (
     <div className="relative w-full h-full flex flex-col overflow-hidden" style={{ background: 'var(--c-bg)' }}>
-      {themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
-
       <HealthBanner />
 
       <Header
@@ -186,6 +194,7 @@ function Workspace() {
 
 export default function App() {
   return (
+    <ThemedLayout>
     <Routes>
       {/* Public routes */}
       <Route path="/login"         element={<LoginPage />} />
@@ -204,5 +213,6 @@ export default function App() {
         </ProtectedRoute>
       } />
     </Routes>
+    </ThemedLayout>
   )
 }
