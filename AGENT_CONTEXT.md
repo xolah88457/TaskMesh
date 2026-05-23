@@ -1,6 +1,6 @@
 TASKMESH — COMPLETE PROJECT CONTEXT
 ====================================
-Last updated: 2026-05-22 (Second full-codebase audit — 18 fixes shipped + 9 architectural items deferred to AUDIT_REMAINING.md)
+Last updated: 2026-05-23 (Project creation pipeline + OAuth remember-me + logo/UX fixes shipped)
 Written for: any agent or developer who has never seen this project before.
 Purpose: read this file in full before touching any code. It is the single authoritative reference.
 
@@ -679,13 +679,16 @@ OAUTH FLOWS:
       5. If not found, try by email (links existing email/password account)
       6. If not found, create new user with UUID
       7. Update google_id on user if not already set
-      8. create_token(user.id, email, name)
-      9. RedirectResponse to FRONTEND_URL/auth/callback#{jwt_token}
-    Frontend (AuthCallback.tsx):
-      Reads window.location.hash.slice(1) to extract token
-      Calls login(token)
-      Replaces URL hash with empty string (window.history.replaceState)
-      Navigates to / via React Router
+       8. create_token(user.id, email, name)
+       9. RedirectResponse to FRONTEND_URL/auth/callback#{jwt_token}
+           Note: cookie is NOT set here (was being stripped by Vercel proxy on redirects).
+           Instead, the frontend POSTs the token to /api/auth/exchange (see below).
+     POST /api/auth/exchange:
+       Frontend (AuthCallback.tsx) extracts JWT from URL hash and POSTs it here.
+       Backend validates the JWT and sets the HttpOnly cookie on the JSON response
+       (not a redirect), with explicit domain from FRONTEND_URL hostname, max_age=7d,
+       and expires header for maximum browser persistence compatibility.
+       This avoids the Vercel proxy stripping Set-Cookie on OAuth redirect responses.
 
   GitHub Login:
     Same flow but different endpoints:
@@ -838,17 +841,28 @@ CORE ROUTES (no prefix beyond /api):
 
   POST /api/start-project
     Auth: required
-    Request body: {brief: string}
-    Checks if orchestrator is already running — returns {error: "already running"} if so.
-    DEV BYPASS: if AUTH_DISABLED=true OR user_id="dev-user", skips billing gate entirely
-      and starts run with plan="pro", agent_limit=None.
-    BILLING GATE (production only):
-      Loads UserCredits row for the user.
-      If plan="none": returns {error: "no_subscription"}
-      If balance_cents <= 0: returns {error: "no_credits"}
-    Sets agent_limit=3 for Starter plan, None for Pro.
-    Creates asyncio.create_task for orchestrator.run(brief, user_id, agent_limit, plan).
-    Returns: {status: "started"}
+    Legacy endpoint — now delegates to the projects flow. Creates a project row
+    (auto-generated name from brief), then starts a run. Returns project_id and run_id.
+    See POST /api/projects for the primary creation path.
+
+  POST /api/projects
+    Auth: required
+    Request body: {name: string, brief: string, icon?: string, agents?: string[],
+      auto_start?: bool}
+    Creates a project row with unique slug per user (dedup with -2, -3 suffixes).
+    If auto_start=true: billing gate, creates PROJECT_DIR/{slug}/ folder, starts
+    orchestrator with selected_agents filtering. Manager always force-included.
+    Returns: {project_id, slug, run_id?, status: "started"|"created"}
+
+  GET /api/projects
+    Auth: required
+    Returns all projects for user ordered by updated_at desc.
+    Response: {projects: [{id, name, slug, desc, icon, created_at, updated_at}]}
+
+  GET /api/projects/{project_id}
+    Auth: required
+    Returns project detail with latest run status and file count.
+    Response: {id, name, slug, desc, icon, status, created_at, updated_at, file_count}
 
   POST /api/cancel
     Auth: required
@@ -1095,10 +1109,11 @@ CLIENT-TO-SERVER:
 SECTION 11: MULTI-AGENT PIPELINE — COMPLETE FLOW
 ================================================================================
 
-ENTRY POINT: POST /api/start-project creates a per-user Orchestrator, generates a run_id,
-and spawns orchestrator.run(brief, user_id, agent_limit, plan, upload_dir, run_id) via
-asyncio.create_task(). Each user gets their own orchestrator + agents — no queueing.
-Multiple users can run concurrently (dict[user_id, Orchestrator] singleton replaced).
+ENTRY POINT: POST /api/projects (or legacy POST /api/start-project) creates a per-user
+Orchestrator with a project row in the DB. If auto_start is true, generates a run_id and
+spawns orchestrator.run(brief, user_id, agent_limit, plan, selected_agents, project_id,
+run_id) via asyncio.create_task(). Each run writes files into PROJECT_DIR/{slug}/.
+Per-project agent selection filters config.agents in _run_pipeline (manager always included).
 
 ARCHITECTURE (3-stage pipeline):
   Stage 1 — Research. The Manager and any planner agents (agents with planner: true)

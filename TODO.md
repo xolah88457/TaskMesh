@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-22 (Second full-codebase audit). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-23 (Project creation pipeline + UX fixes). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -8,6 +8,22 @@
 ---
 
 ## ✅ Completed
+
+### Project Creation Pipeline (2026-05-23)
+- ✅ **`projects` table** — new DB table (id, user_id, name, slug, desc, icon, created_at/updated_at) with unique (user_id, slug) index. `runs` table gains `project_id` FK + `selected_agents` column. Migration with FK constraint via DO block.
+- ✅ **Project API endpoints** — `POST /api/projects` (create + optional first run), `GET /api/projects` (list), `GET /api/projects/{id}` (detail). Legacy `start-project` delegates to projects flow. Slug dedup with -2, -3 suffixes.
+- ✅ **Per-project folder isolation** — `PROJECT_DIR/{slug}/` per project via `get_project_dir(slug?)`. Orchestrator writes files into project-specific subdirectories.
+- ✅ **Per-project agent selection** — `Orchestrator.run()` accepts `selected_agents: list[str] | None`. `_run_pipeline` filters `config.agents` to selected list (manager always force-included). `selected_agents` persisted on run row.
+- ✅ **Dashboard loads from API** — `GET /api/projects` on mount, mapped to local `Project` interface with display defaults. `launchNew` POSTs to `/api/projects` with name, brief, icon, agents selection.
+- ✅ **Launch Project ports settings** — Creates project, navigates to `/project/:runId` with `{ projectName, projectDesc, projectAgents }` in nav state. Workspace reads nav state via `useLocation()`, auto-opens SettingsPanel with pre-filled sprint field.
+- ✅ **Agent network defaults** — `CreateTab` defaults to only Manager enabled. User picks additional agents.
+
+### UX Fixes (2026-05-23)
+- ✅ **Logo updated** — Transparent SVG with `currentColor` for theme-aware rendering. Replaced text "tm" in Dashboard with inline SVG. Updated `assets/logo.svg` and favicon to `/logo.svg`.
+- ✅ **OAuth remember me** — Added `POST /api/auth/exchange` endpoint. AuthCallback POSTs JWT to exchange endpoint which sets HttpOnly cookie on JSON response (avoids Vercel proxy stripping Set-Cookie on redirects). Cookie includes explicit domain from FRONTEND_URL hostname + `max_age` + `expires` headers.
+- ✅ **Notifications toggle clarity** — Larger toggle (w-9 h-5), visible border in off state, shadow on knob, `transition-colors`.
+- ✅ **Matrix rain scoped** — Only renders on Dashboard and Workspace (authenticated pages), not login/register.
+- ✅ **Credit footer** — Shows percentage (e.g. "credits 54%") on both Dashboard and Workspace status bars.
 
 ### Second Full Codebase Audit (2026-05-22)
 - ✅ **Duplicate LLM call removed** — `_run_agent_loop` was calling `agent.run()` twice per task (once directly, once through `_run_with_search`). Cut credit burn ~50% per executor task.

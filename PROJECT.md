@@ -1,5 +1,5 @@
 # TaskMesh — Project State
-> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-22 (Second full-codebase audit — 18 fixes shipped).
+> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-23 (Project creation pipeline + UX fixes shipped).
 > Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`. Open items: `AUDIT_REMAINING.md`.
 
 ---
@@ -8,8 +8,9 @@
 Ship a working SaaS product: users sign up, pay via Paddle, and a team of AI agents builds
 software for them in real time — writing real files, visible in the browser as they work.
 
-**Active milestone:** Billing + account management complete (code done); external services
-(Paddle, GitHub OAuth) not yet wired up. Next: connect those services and test end-to-end.
+**Active milestone:** Project creation pipeline complete. Users can create named projects
+with per-project agent selection, each isolated to `PROJECT_DIR/{slug}/`. Dashboard
+reflects real DB data. OAuth remember-me persists across browser restarts.
 
 ---
 
@@ -22,9 +23,10 @@ Browser (React + Socket.IO)
 Vite dev server :5173  ──proxy /api, /socket.io──▶  FastAPI + python-socketio :8000
                                                            │
                                                    ┌───────┴────────┐
-                                                     │   Orchestrator  │   (3-stage: Research→Plan→Production)
+                                                     │  Orchestrator  │   (3-stage: Research→Plan→Production)
                                                      │  (core/orchestrator.py)
-                                                    └───────┬────────┘
+                                                     │  runs in PROJECT_DIR/{slug}/
+                                                     └───────┬────────┘
                                                             │  spawns
                                             ┌────────────────┼────────────────┐
                                     Stage 1-2: Planners    Stage 3: Executors + Validators
@@ -42,8 +44,11 @@ Vite dev server :5173  ──proxy /api, /socket.io──▶  FastAPI + python-s
 ```
 
 **Auth flow:** custom JWT (PyJWT + bcrypt). Google OAuth + GitHub OAuth for social login.
+OAuth remember-me persists via `POST /api/auth/exchange` — cookie set on JSON response
+(not redirect) to survive Vercel proxy; explicit domain and max_age/expires headers.
 **Payments:** Paddle → webhook → `user_credits` table (plan + balance_cents).
-**DB:** Google Cloud SQL (PostgreSQL) via asyncpg. All ops no-op gracefully if `DATABASE_URL` unset.
+**DB:** Google Cloud SQL (PostgreSQL) via asyncpg. New `projects` table for project
+identity. `runs.project_id` links runs to projects. All ops no-op gracefully if DATABASE_URL unset.
 **Frontend state:** Socket.IO events drive a `useReducer` in `useSocket.ts`. No Redux.
 **Provider migration path:** OpenCode Zen (active) | OpenRouter (toggleable via `PROVIDER=openrouter` env var).
 
@@ -220,6 +225,9 @@ curl -X POST http://localhost:8000/api/auth/register \
 | **Cookie SameSite configurable (2026-05-22)** | Split-origin deploys (Vercel↔Render) need `SameSite=None` so Socket.IO can carry the cookie. `COOKIE_SAMESITE` env var defaults to `strict` for local dev. |
 | **Removed duplicate LLM call (2026-05-22)** | `_run_agent_loop` was hitting OpenCode Zen twice per task (direct + via `_run_with_search`). Halves credit burn on executors. The search wrapper is now the single entry point. |
 | **DB task id = canonical id (2026-05-22)** | `SharedTaskList.add_task` overrides the memory copy's id with the DB row id when DB-backed; `_claim_db` sets `status="claimed"` (not `in_progress`) so `start_task`'s documented transition is real. |
+| **Project creation pipeline (2026-05-23)** | New `projects` table. `POST/GET /api/projects` endpoints. Per-project folder at `PROJECT_DIR/{slug}/`. Per-project agent selection (selected_agents on run row). Dashboard loads real projects from API. Launch creates project then navigates to workspace (autoStart off → SettingsPanel opens). Default agent selection is manager-only. |
+| **OAuth remember-me (2026-05-23)** | Cookie set via `POST /api/auth/exchange` on JSON response (not redirect) to survive Vercel proxy. Explicit domain from FRONTEND_URL, max_age + expires headers. |
+| **Logo + UX polish (2026-05-23)** | Transparent SVG logo with currentColor. Notifications toggle improved. Matrix rain scoped to authenticated pages. Credit footer shows percentage on both Dashboard + Workspace. |
 
 ---
 
@@ -263,15 +271,17 @@ The current milestone is "working SaaS product, end-to-end":
 
 ## Where I Left Off (Agent Recovery)
 
-**Session ended:** 2026-05-22 (Second full-codebase audit — 18 fixes shipped)
+**Session ended:** 2026-05-23 (Project creation pipeline shipped)
 **Last actions:**
-- Walked every backend + frontend + config + test file. Identified ~30 issues across
-  efficiency / correctness / UX. Fixed 18 inline, documented 9 architectural items in
-  `AUDIT_REMAINING.md`. See `TODO.md` "Second Full Codebase Audit (2026-05-22)" for the
-  full list with file references.
-- **Critical fixes**:
-  - Removed duplicate LLM call in `_run_agent_loop` (was hitting Zen 2× per task)
-  - Fixed `SharedTaskList.add_task` id drift between memory and DB
+- Built full project creation + persistence pipeline: `projects` DB table, `POST/GET /api/projects`
+  API endpoints, per-project `PROJECT_DIR/{slug}/` folder isolation, per-project agent selection
+  (selected_agents filters orchestrator pipeline, manager always included).
+- Dashboard now loads projects from API (not local-only state). launchNew POSTs to `/api/projects`
+  with name, brief, icon, agent selection. Navigates to workspace with settings pre-filled.
+- Fixed OAuth remember-me: cookie now set via `POST /api/auth/exchange` on JSON response
+  (not redirect), with explicit domain + max_age + expires to survive Vercel proxy.
+- Logo replaced with transparent currentColor SVG (inline in Dashboard, asset file for Header).
+  Notifications toggle redesigned for clear on/off state. Credit footer shows percentage.
   - Made `docs_search` non-blocking (`asyncio.to_thread` + skip-list of noise dirs)
   - Made auth cookie SameSite configurable so split-origin deploys (Vercel↔Render)
     can authenticate Socket.IO
@@ -292,15 +302,16 @@ The current milestone is "working SaaS product, end-to-end":
   config.json git-tracking, MODEL_PRICING drift, etc.) rather than defects
 
 **Next 3 concrete tasks:**
-1. Subscribe to OpenCode Zen at https://opencode.ai/zen → set `OPENCODE_GO_API_KEY` in `.env`
-2. Create Paddle account + wire up webhook → test full sign-up → subscribe → run flow
-3. Decide on the 9 deferred items in `AUDIT_REMAINING.md` before launch
+1. Wire Paddle checkout (PADDLE_PRICE_*) + webhook → test full sign-up → pay → run → credit deduction flow
+2. Wire GitHub OAuth for login + code push (GITHUB_AUTH_CLIENT_ID, GITHUB_CLIENT_ID)
+3. Fix remaining blocked items in TODO.md (agent runs need OPENCODE_GO_API_KEY, etc.)
 
 **Known broken flows:**
 - Agent runs → auth error (OPENCODE_GO_API_KEY not yet set in .env)
 - `Upgrade plan` checkout → 503 (PADDLE_PRICE_* not set)
 - `Manage Subscription` portal → 503 (PADDLE_API_KEY not set)
 - Auto-commit after run → silently fails (PROJECT_DIR git repo not initialized)
+- GitHub login → unconfigured (GITHUB_AUTH_CLIENT_ID/GITHUB_AUTH_CLIENT_SECRET not set)
 
 **Constraints:**
 - Do NOT enable auth in production without setting a strong `SECRET_KEY` (a startup warning fires)
