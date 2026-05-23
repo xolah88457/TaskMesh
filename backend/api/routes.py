@@ -451,14 +451,6 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
     if existing is not None and existing.is_running():
         return {"error": "already_running", "status": "busy"}
 
-    # Resolve upload token
-    upload_dir = ""
-    if body.upload_token and body.upload_token in _upload_tokens:
-        token_data = _upload_tokens.pop(body.upload_token)
-        if token_data.get("user_id") == user_id:
-            upload_dir = token_data.get("upload_dir", "")
-        asyncio.create_task(_cleanup_expired_tokens())
-
     # Billing gate
     from ..db.session import get_session
 
@@ -478,12 +470,20 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
             return {"error": "no_credits", "status": "blocked"}
         agent_limit = 3 if plan == "starter" else None
 
+    # Resolve upload token
+    upload_dir = ""
+    if body.upload_token and body.upload_token in _upload_tokens:
+        token_data = _upload_tokens.pop(body.upload_token)
+        if token_data.get("user_id") == user_id:
+            upload_dir = token_data.get("upload_dir", "")
+        asyncio.create_task(_cleanup_expired_tokens())
+
     # Create a project row for this brief-only run
     from ..db.models import Project
     run_id = str(uuid.uuid4())
     project_id = str(uuid.uuid4())
     project_name = body.brief[:50] + ("..." if len(body.brief) > 50 else "")
-    slug = re.sub(r'[^a-z0-9]+', '-', project_name.strip().lower()).strip('-') or f"untitled-{project_id[:8]}"
+    slug = _make_slug(project_name) or f"untitled-{project_id[:8]}"
 
     async with get_session() as session:
         if session is not None:
