@@ -523,8 +523,9 @@ export default function Dashboard() {
         }),
       })
 
+      d = await r.json()
+
       if (!r.ok) {
-        try { d = await r.json() } catch { d = {} }
         if (d.error === 'no_subscription') {
           setToast('You need a subscription to start projects')
           navigate('/billing')
@@ -538,12 +539,11 @@ export default function Dashboard() {
         setToast(d.error || 'Failed to start project')
         return
       }
-
-      d = await r.json()
     } catch {
       setToast('Could not start project. Try again.')
       return
     }
+
 
     if (d.run_id) {
       setActiveId(d.project_id)

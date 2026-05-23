@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import MatrixRain from './components/MatrixRain'
 import HealthBanner from './components/HealthBanner'
 import Header from './components/Header'
@@ -62,6 +62,7 @@ function BillingGate({ children }: { children: React.ReactNode }) {
   const authFetch  = useAuthFetch()
   const navigate   = useNavigate()
   const { loading } = useAuthContext()
+  const navigationType = useNavigationType()
   const [checked, setChecked] = useState(AUTH_DISABLED)
 
   useEffect(() => {
@@ -70,18 +71,20 @@ function BillingGate({ children }: { children: React.ReactNode }) {
       .then(r => r.json())
       .then((data: { plan: string }) => {
         if (data.plan === 'none') {
-          if (_didBillingRedirect) {
-            setChecked(true)
-          } else {
+          if (_didBillingRedirect && navigationType === 'POP') {
+            navigate('/login', { replace: true })
+          } else if (!_didBillingRedirect) {
             _didBillingRedirect = true
             navigate('/billing', { replace: true })
+          } else {
+            setChecked(true)
           }
         } else {
           setChecked(true)
         }
       })
       .catch(() => setChecked(true))
-  }, [authFetch, navigate, loading])
+  }, [authFetch, navigate, loading, navigationType])
 
   if (!checked) return null   // brief flash while the check runs
   return <>{children}</>
