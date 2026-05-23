@@ -74,4 +74,32 @@ async def _run_migrations() -> None:
         await conn.execute(text(
             "ALTER TABLE user_credits ADD COLUMN IF NOT EXISTS customer_id VARCHAR(128)"
         ))
+        # Added 2026-05-22 — projects table + run columns
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS projects ("
+            "  id VARCHAR(36) PRIMARY KEY,"
+            "  user_id VARCHAR(128) NOT NULL,"
+            "  name VARCHAR(256) NOT NULL,"
+            "  slug VARCHAR(256) NOT NULL,"
+            "  desc TEXT,"
+            "  icon VARCHAR(8),"
+            "  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),"
+            "  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_projects_user_id ON projects(user_id)"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_projects_user_slug ON projects(user_id, slug)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE runs ADD COLUMN IF NOT EXISTS project_id VARCHAR(36)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE runs ADD COLUMN IF NOT EXISTS selected_agents TEXT"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_runs_project_id ON runs(project_id)"
+        ))
         # Add future column migrations here with a date comment

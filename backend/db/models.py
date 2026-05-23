@@ -43,22 +43,45 @@ class User(Base):
     )
 
 
+class Project(Base):
+    __tablename__ = "projects"
+
+    id         = Column(String(36), primary_key=True)
+    user_id    = Column(String(128), nullable=False)
+    name       = Column(String(256), nullable=False)
+    slug       = Column(String(256), nullable=False)
+    desc       = Column(Text, nullable=True)
+    icon       = Column(String(8), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    runs = relationship("Run", back_populates="project", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_projects_user_id", "user_id"),
+        Index("ix_projects_user_slug", "user_id", "slug", unique=True),
+    )
+
+
 class Run(Base):
     __tablename__ = "runs"
 
-    id          = Column(String(36), primary_key=True)   # UUID
-    user_id     = Column(String(128), nullable=False)    # UUID from users table
-    brief       = Column(Text, nullable=False)
-    status      = Column(String(20), nullable=False, default="running")
-    # status values: running | done | cancelled | error
-    agents_used = Column(Text, nullable=True)            # JSON list of agent IDs selected
-    started_at  = Column(DateTime(timezone=True), nullable=False, default=_now)
-    finished_at = Column(DateTime(timezone=True), nullable=True)
+    id              = Column(String(36), primary_key=True)
+    user_id         = Column(String(128), nullable=False)
+    project_id      = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
+    brief           = Column(Text, nullable=False)
+    selected_agents = Column(Text, nullable=True)
+    status          = Column(String(20), nullable=False, default="running")
+    agents_used     = Column(Text, nullable=True)
+    started_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
+    finished_at     = Column(DateTime(timezone=True), nullable=True)
 
-    files = relationship("RunFile", back_populates="run", cascade="all, delete-orphan")
+    project = relationship("Project", back_populates="runs")
+    files   = relationship("RunFile", back_populates="run", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_runs_user_id", "user_id"),
+        Index("ix_runs_project_id", "project_id"),
     )
 
 
