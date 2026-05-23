@@ -455,7 +455,7 @@ async def _load_user_config(user_id: str, project_name: str | None = None) -> Pr
     mgr = next((a for a in agents if a.get("id") == "manager"), DEFAULT_AGENTS[0].copy())
     others = [a for a in agents if a.get("id") != "manager"]
     agents = [mgr] + others
-    return ProjectConfig(project="", sprint=sprint, agents=agents, provider=provider)
+    return ProjectConfig(project=project_name or "", sprint=sprint, agents=agents, provider=provider)
 
 
 def all_agents_default(agents: list) -> bool:
