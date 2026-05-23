@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthFetch } from '../hooks/useAuthFetch'
 import { useAuthContext } from '../context/auth'
+import MatrixRain from '../components/MatrixRain'
+import { getTheme } from '../themes'
 
 // ── Data types ──────────────────────────────────────────────────────────────────
 
@@ -462,6 +464,9 @@ export default function Dashboard() {
     document.documentElement.setAttribute('data-theme', dataTheme)
   }, [])
 
+  const themeId = localStorage.getItem('agentteam-theme') ?? 'default'
+  const theme = getTheme(themeId)
+
   const openInAgent = (p: Project) => {
     setActiveId(p.id)
     navigate(`/project/${p.id}`)
@@ -619,8 +624,10 @@ export default function Dashboard() {
   }))
 
   return (
-    <div className="app no-rail-mode">
-      <div className="topbar">
+    <>
+      {themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
+      <div className="app no-rail-mode">
+        <div className="topbar">
         <div className="crumbs">
           <div className="logo">tm</div>
           <span className="seg">src</span>
@@ -753,7 +760,8 @@ export default function Dashboard() {
           <span style={{ color: 'var(--accent)', marginRight: 6 }}>▌</span>
           {toast}
         </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   )
 }

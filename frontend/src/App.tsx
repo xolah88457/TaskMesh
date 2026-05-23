@@ -33,7 +33,6 @@ const AUTH_DISABLED = import.meta.env.VITE_AUTH_DISABLED === 'true'
 function ThemedLayout({ children }: { children: React.ReactNode }) {
   const themeId = localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
   const theme = getTheme(themeId)
-  const { user } = useAuthContext()
 
   useEffect(() => {
     const root = document.documentElement
@@ -42,12 +41,7 @@ function ThemedLayout({ children }: { children: React.ReactNode }) {
     })
   }, [theme])
 
-  return (
-    <>
-      {user && themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
-      {children}
-    </>
-  )
+  return <>{children}</>
 }
 
 // ── Route guards ───────────────────────────────────────────────────────────────
@@ -128,8 +122,13 @@ function Workspace() {
     window.addEventListener('mouseup', onUp)
   }, [activityHeight])
 
+  const themeId = localStorage.getItem('agentteam-theme') ?? DEFAULT_THEME_ID
+  const theme = getTheme(themeId)
+
   return (
-    <div className="relative w-full h-full flex flex-col overflow-hidden" style={{ background: 'var(--c-bg)' }}>
+    <>
+      {themeId === 'matrix' && <MatrixRain rainColor={theme.vars['--rain-color']} rainBg={theme.vars['--rain-bg']} />}
+      <div className="relative w-full h-full flex flex-col overflow-hidden" style={{ background: 'var(--c-bg)' }}>
       <HealthBanner />
 
       <Header
@@ -188,6 +187,7 @@ function Workspace() {
         onSaved={() => {}}
       />
     </div>
+    </>
   )
 }
 
