@@ -30,6 +30,16 @@ export interface Usage {
   updated_at?: string | null
 }
 
+interface ApiProject {
+  id: string
+  name: string
+  slug: string
+  desc: string | null
+  icon: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────────
 
 const STATUSES = ['running', 'ready', 'paused', 'done', 'error', 'idle'] as const
@@ -446,16 +456,40 @@ export default function Dashboard() {
   const [alertsOpen, setAlertsOpen] = useState(false)
   const [usage, setUsage] = useState<Usage | null>(null)
 
+  // Load projects from API
   useEffect(() => {
     authFetch('/api/projects')
       .then(r => r.json())
-      .then((d: { projects?: Project[] }) => setProjects(d.projects ?? []))
+      .then((d: { projects?: ApiProject[] }) => {
+        const mapped: Project[] = (d.projects ?? []).map(p => ({
+          id: p.id,
+          name: p.name,
+          desc: p.desc || '',
+          path: `~/projects/${p.slug}`,
+          icon: p.icon || '📁',
+          color: 'var(--c-cyan)',
+          status: 'ready',
+          progress: 0,
+          agents: 0,
+          files: 0,
+          lastActive: p.updated_at ? new Date(p.updated_at).toLocaleDateString() : 'never',
+          lastActiveSort: p.updated_at ? new Date(p.updated_at).getTime() : 0,
+          created: p.created_at ? new Date(p.created_at).toLocaleDateString() : 'never',
+          tokens: '0K',
+        }))
+        setProjects(prev => mapped.length > 0 ? mapped : prev)
+        // If we came from creation, highlight the active project
+        if (activeId) {
+          const exists = mapped.find(p => p.id === activeId)
+          if (exists) setTab('projects')
+        }
+      })
       .catch(() => {})
     authFetch('/api/billing/usage')
       .then(r => r.json())
       .then(setUsage)
       .catch(() => {})
-  }, [])
+  }, [])  // load only on mount
 
   // Set data-theme from localStorage
   useEffect(() => {
