@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from ..auth.auth import require_auth
 from ..core.config_loader import DEFAULT_AGENTS, DEFAULT_PROVIDER, save_config, get_project_dir, ProjectConfig, load_config
@@ -182,6 +182,89 @@ async def health_check():
 class ProjectBrief(BaseModel):
     brief: str
     upload_token: str | None = None
+
+
+def _make_slug(name: str) -> str:
+    """Convert a project name into a URL-safe slug."""
+    import re
+    s = name.strip().lower()
+    s = re.sub(r'[^a-z0-9]+', '-', s)
+    return s.strip('-') or "project"
+
+
+@router.get("/projects")
+async def list_projects(user: dict = Depends(require_auth)):
+    """Return minimal project list for Dashboard."""
+    from ..db.models import Project
+    from ..db.session import get_session
+    user_id = user.get("sub", "anonymous")
+
+    async with get_session() as session:
+        if session is None:
+            return {"projects": []}
+        result = await session.execute(
+            select(Project)
+            .where(Project.user_id == user_id)
+            .order_by(Project.updated_at.desc())
+        )
+        rows = result.scalars().all()
+        return {
+            "projects": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "slug": p.slug,
+                    "desc": p.desc,
+                    "icon": p.icon or "",
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                }
+                for p in rows
+            ]
+        }
+
+
+@router.get("/projects/{project_id}")
+async def get_project(project_id: str, user: dict = Depends(require_auth)):
+    """Return full project detail for Workspace header."""
+    from ..db.models import Project
+    from ..db.session import get_session
+    user_id = user.get("sub", "anonymous")
+
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        result = await session.execute(
+            select(Project).where(Project.id == project_id, Project.user_id == user_id)
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Find latest run status for this project
+        from ..db.models import Run
+        run_result = await session.execute(
+            select(Run)
+            .where(Run.project_id == project_id)
+            .order_by(Run.started_at.desc())
+            .limit(1)
+        )
+        run = run_result.scalar_one_or_none()
+        file_count = 0
+        if run:
+            file_count = len(run.files) if run.files else 0
+
+        return {
+            "id": row.id,
+            "name": row.name,
+            "slug": row.slug,
+            "desc": row.desc,
+            "icon": row.icon or "",
+            "status": run.status if run else "ready",
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "file_count": file_count,
+        }
 
 
 class UploadFileItem(BaseModel):
