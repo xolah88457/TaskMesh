@@ -25,6 +25,7 @@ interface Project {
 interface Usage {
   plan: 'none' | 'starter' | 'pro'
   balance_cents: number
+  updated_at?: string | null
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────────
@@ -44,17 +45,30 @@ const ALL_AGENTS: { id: string; name: string; role: string; color: string; requi
 
 // ── Sub-components ──────────────────────────────────────────────────────────────
 
-function CreditWidget({ balanceCents }: { balanceCents: number }) {
-  const dollars = (balanceCents / 100)
+function CreditWidget({ usage }: { usage: Usage | null }) {
+  const balance = usage?.balance_cents ?? 0
+  const plan = usage?.plan ?? 'none'
+  const planAlloc: Record<string, number> = { starter: 1500, pro: 4800, none: 1 }
+  const allocated = planAlloc[plan] || 1
+  const pct = Math.min(100, Math.round((balance / allocated) * 100))
+  const updated = usage?.updated_at
+    ? new Date(usage.updated_at).toLocaleDateString()
+    : null
   return (
     <div className="widget">
       <div className="widget-label">
         <span>Credit balance</span>
-        <span className="badge">available</span>
+        <span className="badge">{plan === 'none' ? 'no plan' : plan}</span>
       </div>
-      <div className="widget-big">${dollars.toFixed(0)}</div>
+      <div className="widget-big">{pct}<span style={{ fontSize: 16, color: 'var(--text-mute)' }}>%</span></div>
+      <div className="credit-bar">
+        <div className="credit-bar-fill" style={{ width: pct + '%' }} />
+      </div>
       <div className="credit-meta">
-        <span>{dollars.toLocaleString()} credits available</span>
+        <span>{plan === 'pro' ? 'Pro' : plan === 'starter' ? 'Starter' : 'No'} plan · ${ (balance / 100).toFixed(0)} of ${ (allocated / 100).toFixed(0)}</span>
+        {updated && (
+          <span style={{ color: 'var(--text-dim)', marginLeft: 'auto' }}>{updated}</span>
+        )}
       </div>
     </div>
   )
@@ -107,6 +121,7 @@ function QuickActionsWidget({ onAction, lastProjectName }: { onAction: (id: stri
   const actions = [
     { id: 'last', label: lastProjectName ? `Last: ${lastProjectName}` : 'Last Project', ic: '↗' },
     { id: 'duplicate', label: 'Duplicate Last', ic: '⎘' },
+    { id: 'billing', label: 'Billing & Credits', ic: '💳' },
   ]
   return (
     <div className="widget">
@@ -507,6 +522,8 @@ export default function Dashboard() {
         setProjects([dup, ...projects])
         setToast(`duplicated ${last.name}`)
       }
+    } else if (id === 'billing') {
+      navigate('/billing')
     }
   }
 
@@ -622,15 +639,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Credits status */}
-        {usage && (
-          <button className="iconbtn" title="Credits" onClick={() => navigate('/billing')}
-            style={{ gap: 4 }}>
-            <span className="status-dot running" style={{ width: 5, height: 5 }} />
-            <span style={{ color: 'var(--text-dim)' }}>credits</span>
-          </button>
-        )}
-
         <div className="account-pop-wrap" style={{ position: 'relative' }}>
           <button className="iconbtn" onClick={() => setAccountOpen(!accountOpen)}
             style={{ padding: '3px 8px 3px 4px' }}>
@@ -672,7 +680,7 @@ export default function Dashboard() {
       <div className="main no-rail">
         <div className="canvas">
           <div className="widgets">
-            <CreditWidget balanceCents={usage?.balance_cents ?? 0} />
+            <CreditWidget usage={usage} />
             <ProjectCountWidget count={projects.length} activeCount={projects.filter(p => p.status === 'running' || p.status === 'ready').length} />
             <TasksWidget totalMessages={283} />
             <QuickActionsWidget onAction={handleQuickAction} lastProjectName={projects[0]?.name} />

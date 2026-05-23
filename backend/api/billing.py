@@ -278,7 +278,10 @@ async def get_usage(user: dict = Depends(require_auth)):
 
     # Dev bypass — return a generous fake "pro" balance in local dev mode
     if _AUTH_DISABLED or user_id == "dev-user":
-        return {"plan": "pro", "balance_cents": 4800, "run_count": 0, "run_limit": None}
+        return {
+            "plan": "pro", "balance_cents": 4800, "run_count": 0,
+            "run_limit": None, "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     async with get_session() as session:
         if session is None:
@@ -290,12 +293,14 @@ async def get_usage(user: dict = Depends(require_auth)):
     plan          = credits.plan          if credits else "none"
     balance_cents = credits.balance_cents if credits else 0
     run_count     = usage.run_count       if usage   else 0
+    updated_at    = credits.updated_at.isoformat() if credits and credits.updated_at else None
 
     return {
         "plan":          plan,
         "balance_cents": balance_cents,
         "run_count":     run_count,
         "run_limit":     None,   # no run cap for pro/starter (reserved for future)
+        "updated_at":    updated_at,
     }
 
 

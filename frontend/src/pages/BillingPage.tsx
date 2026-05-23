@@ -289,9 +289,9 @@ export default function BillingPage() {
                         onClick={() => {
                           authFetch('/api/billing/portal')
                             .then(r => r.json())
-                            .then((d: { portal_url?: string }) => {
+                            .then((d: { portal_url?: string; detail?: string }) => {
                               if (d.portal_url) window.open(d.portal_url, '_blank')
-                              else alert('Could not open subscription portal')
+                              else alert(d.detail ?? 'Subscription portal not available — ensure Paddle is configured')
                             })
                             .catch(() => alert('Could not open subscription portal'))
                         }}

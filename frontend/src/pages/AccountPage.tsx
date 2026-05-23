@@ -424,9 +424,9 @@ export default function AccountPage() {
                 onClick={() => {
                   authFetch('/api/billing/portal')
                     .then(r => r.json())
-                    .then((d: { portal_url?: string }) => {
+                    .then((d: { portal_url?: string; detail?: string }) => {
                       if (d.portal_url) window.open(d.portal_url, '_blank')
-                      else alert('Could not open subscription portal')
+                      else alert(d.detail ?? 'Subscription portal not available — ensure Paddle is configured')
                     })
                     .catch(() => alert('Could not open subscription portal'))
                 }}
@@ -493,7 +493,7 @@ export default function AccountPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs" style={{ color: 'var(--c-text-1)' }}>Subscription started</span>
-                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Email when a new subscription activates</p>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Alert when a new subscription activates</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" className="sr-only peer"
@@ -505,7 +505,7 @@ export default function AccountPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs" style={{ color: 'var(--c-text-1)' }}>Credit low</span>
-                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Email when balance drops below $2.50</p>
+                  <p className="text-[10px] mt-0.5" style={{ color: 'var(--c-text-4)' }}>Alert when balance drops below $2.50</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" className="sr-only peer"
