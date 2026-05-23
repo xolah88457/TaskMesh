@@ -443,49 +443,75 @@ async def upload_files(body: UploadRequest, user: dict = Depends(require_auth)):
 
 @router.post("/start-project")
 async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
+    """Legacy endpoint — delegates to new project flow."""
     user_id = user.get("sub", "anonymous")
 
-    # Check if user already has a running orchestrator
+    # Check already running
     existing = _orchestrators.get(user_id)
     if existing is not None and existing.is_running():
-        return {"error": "already running"}
+        return {"error": "already_running", "status": "busy"}
 
-    # Resolve upload token (pop on consumption so it can't be reused)
+    # Resolve upload token
     upload_dir = ""
     if body.upload_token and body.upload_token in _upload_tokens:
         token_data = _upload_tokens.pop(body.upload_token)
         if token_data.get("user_id") == user_id:
             upload_dir = token_data.get("upload_dir", "")
-        # Opportunistic cleanup of other expired tokens
         asyncio.create_task(_cleanup_expired_tokens())
 
-    # Dev bypass — skip billing gate entirely in local dev mode
+    # Billing gate
     if _AUTH_DISABLED or user_id == "dev-user":
-        plan = "pro"
-        agent_limit = None
-        balance = 999999  # effectively unlimited for credit estimate
+        plan, agent_limit, balance = "pro", None, 999999
     else:
-        # Billing gate
         from ..db.session import get_session
         from ..db.models import UserCredits
-        plan    = "none"
-        balance = 0
+        plan, balance = "none", 0
         async with get_session() as session:
             if session is not None:
-                credits  = await session.get(UserCredits, user_id)
-                plan     = credits.plan          if credits else "none"
-                balance  = credits.balance_cents if credits else 0
-
+                credits = await session.get(UserCredits, user_id)
+                plan = credits.plan if credits else "none"
+                balance = credits.balance_cents if credits else 0
         if plan == "none":
-            return {"error": "no_subscription"}
+            return {"error": "no_subscription", "status": "blocked"}
         if balance <= 0:
-            return {"error": "no_credits"}
+            return {"error": "no_credits", "status": "blocked"}
         agent_limit = 3 if plan == "starter" else None
 
-    # Create a fresh orchestrator for this user
+    # Create a project row for this brief-only run
+    from ..db.models import Project
     run_id = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
+    project_name = body.brief[:50] + ("..." if len(body.brief) > 50 else "")
+    slug = re.sub(r'[^a-z0-9]+', '-', project_name.strip().lower()).strip('-') or f"untitled-{project_id[:8]}"
+
+    async with get_session() as session:
+        if session is not None:
+            # Ensure unique slug per user
+            base_slug = slug
+            counter = 1
+            while True:
+                existing_slug = await session.execute(
+                    select(Project).where(Project.user_id == user_id, Project.slug == slug)
+                )
+                if existing_slug.scalar_one_or_none() is None:
+                    break
+                counter += 1
+                slug = f"{base_slug}-{counter}"
+
+            project = Project(
+                id=project_id,
+                user_id=user_id,
+                name=project_name,
+                slug=slug,
+                desc=body.brief,
+            )
+            session.add(project)
+            await session.commit()
+
+    # Create orchestrator
     room = f"user:{user_id}"
-    user_config = await _load_user_config(user_id)
+    user_config = await _load_user_config(user_id, project_name=project_name)
+
     orch = Orchestrator(
         sio=_sio,
         config=user_config,
@@ -497,26 +523,29 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
     run_timeout = int(os.environ.get("RUN_TIMEOUT_SECONDS", "600"))
     orch._run_timeout_seconds = run_timeout
 
+    # Use project-specific directory
+    project_dir = get_project_dir(slug)
+    orch._cwd = project_dir
+
     asyncio.create_task(
-        orch.run(body.brief, user_id=user_id, agent_limit=agent_limit, plan=plan,
-                 api_key="", upload_dir=upload_dir, run_id=run_id)
+        orch.run(
+            body.brief,
+            user_id=user_id,
+            agent_limit=agent_limit,
+            plan=plan,
+            api_key="",
+            upload_dir=upload_dir,
+            run_id=run_id,
+            project_id=project_id,
+        )
     )
 
-    # Credit estimate — warn if estimated cost exceeds balance (real users only)
-    credit_warning = None
-    if not (_AUTH_DISABLED or user_id == "dev-user") and plan != "none":
-        est_tokens_per_call = (4000 + 2000)  # prompt + completion estimate
-        num_agents = len(user_config.agents) - 1  # exclude manager
-        total_est_tokens = num_agents * est_tokens_per_call * 2  # 2 rounds per agent
-        est_cost_cents = max(1, int(total_est_tokens * 0.01))  # rough ~$0.01/1K tokens
-        if isinstance(balance, int) and est_cost_cents > balance:
-            credit_warning = (
-                f"This run may consume up to ${est_cost_cents / 100:.2f} in credits, "
-                f"which exceeds your balance. Consider topping up."
-            )
-
-    return {"status": "started", "run_id": run_id,
-            "credit_warning": credit_warning}
+    return {
+        "status": "started",
+        "run_id": run_id,
+        "project_id": project_id,
+        "slug": slug,
+    }
 
 
 @router.post("/cancel")
