@@ -240,10 +240,10 @@ async def github_install_url(user: dict = Depends(require_auth)):
 
 @router.get("/install/callback")
 async def github_install_callback(
+    request: Request,
     installation_id: str,
     state: str = "",
     setup_action: str = "install",
-    request: Request | None = None,
 ):
     """GitHub App post-install redirect. Persists the installation_id."""
     user_id = _verify_state(state) if state else ""
