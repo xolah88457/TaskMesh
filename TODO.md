@@ -1,5 +1,5 @@
 # TaskMesh — TODO
-> Last updated: 2026-05-23 (Project creation pipeline + UX fixes). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
+> Last updated: 2026-05-24 (Agent Teams + Launch/Billing-back root-cause fixes + Alembic). Status legend: ✅ done · 🔄 in progress · ⬜ not started · ❌ blocked
 
 ---
 
@@ -8,6 +8,31 @@
 ---
 
 ## ✅ Completed
+
+### Multi-tenant hardening, Phase 1 (2026-05-24, second pass)
+
+- ✅ **Filesystem tenant scoping.** `get_project_dir(slug, user_id)` now produces `PROJECT_DIR/{user_id}/{slug}`. Closes the cross-tenant collision where two users with the same project slug shared a directory on disk. Backward-compat: the legacy slug-only signature still works for the health probe. Files: `backend/core/config_loader.py`, `backend/api/routes.py`.
+- ✅ **Connection pool tuning.** `create_async_engine` now uses `pool_size=20`, `max_overflow=20`, `pool_recycle=1800`, all env-overridable. Closes the contention that starves Socket.IO emits during multi-agent runs.
+- ✅ **GitHub App scaffold (data-plane for Agent Teams).** New `UserGitHubInstall` model + Alembic migration `0002_github_app_install`. New endpoints under `/api/github/install/*` — install URL, callback, status, repo picker, repo list, uninstall. The legacy `user_github` OAuth flow is preserved for the existing `/api/github/push` PR endpoint. The GitHub App credentials (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_SLUG`) are documented in `.env.example`.
+- ✅ **GitHubSink module.** `backend/core/github_sink.py` mints installation-scoped access tokens from the App's private key (RS256), caches per `installation_id` for 50 min, and exposes `push_files()` + `append_jsonl()` against the user's chosen repo + branch. Retries on 401 by invalidating the cached token. Surfaces `GitHubSinkError(code, status_code)` to the API layer.
+- ✅ **Agent Teams feature gating.** `require_teams_access` dependency now wraps every `/api/teams*` route. Free / Starter users hit `HTTPException(402, "agent_teams_pro_only")`. Pro users without a GitHub App installation hit `HTTPException(412, "github_not_connected")`. Pack purchasers pass automatically because `_handle_transaction_completed` already stamps `plan='pro'`. Dev bypass via `AUTH_DISABLED` or `TEAMS_REQUIRE_GITHUB=false`.
+- ✅ **TeamsPage paywall + GitHub onboarding.** Three gates in the frontend mirror the backend: paywall view, install + repo picker, ready. The Install button opens `/api/github/install/url` (returns the GitHub install URL with HMAC-signed state). Once installed, the repo dropdown is populated from `/api/github/install/repos`.
+- ✅ **TeamOrchestrator → GitHub push on task complete.** After a TeamTask transitions to `done`, the orchestrator fires `asyncio.create_task(_push_task_to_github(...))` which appends a JSONL row to `taskmesh/teams/{team_id}/tasks.jsonl` and writes the human-readable result to `taskmesh/teams/{team_id}/results/{task_id}.md` in the user's chosen repo. Fire-and-forget — GitHub outages do not block the PG state machine.
+
+### Agent Teams + root-cause bug fixes + Alembic (2026-05-24)
+
+- ✅ **Bug 1 — Launch Project root cause.** Backend `POST /api/projects` now raises `HTTPException(402)` for `no_subscription` / `no_credits` and `409` for `already_running`. The billing gate runs **before** the project row is created so orphaned rows no longer accumulate. Frontend `launchNew` reads `r.ok` correctly and reads `d.detail` (FastAPI HTTPException payload) for the error code. Falls back to `d.error` for back-compat. Files: `backend/api/routes.py`, `frontend/src/pages/Dashboard.tsx`.
+- ✅ **Bug 2 — Billing back-button root cause.** `BillingGate` (history-stack hack with `_didBillingRedirect` module flag and `navigationType === 'POP'` branch) removed entirely. Replaced by plan-aware navigation in `LoginPage`, `RegisterPage`, `AuthCallback`. After successful auth, if `plan === 'none'`, the code PUSHES `/billing` (history grows: `[/login, /billing]`) so browser back returns to `/login`. The OAuth path uses `window.history.replaceState('/login')` before the push to give it the same back-target. `Dashboard` mount has a lightweight redirect for direct-URL access. Files: `frontend/src/App.tsx`, `LoginPage.tsx`, `RegisterPage.tsx`, `AuthCallback.tsx`, `Dashboard.tsx`.
+- ✅ **Feature — Agent Teams (database, API, UI).** New first-class feature modelled on the AGENT_TEAMS.md spec.
+  - DB: `Team`, `TeamMember`, `TeamTask`, `TeamMessage` in `backend/db/models_teams.py`. Tenant scoping by `user_id` on the `Team` table; child tables enforce isolation via the parent FK.
+  - Orchestration: `TeamOrchestrator` in `backend/core/team_orchestrator.py` — create/list/delete teams, spawn/shutdown members, create/claim/complete/fail tasks (with `depends_on` enforcement), send/list messages, optional LLM-driven `execute_task` that uses `BaseAgent` on the member's chosen model.
+  - REST: `backend/api/teams.py` — full CRUD surface, all auth-gated, all scoped to the caller's user_id.
+  - Realtime: Socket.IO room `team:{id}`, joined via `team_subscribe` event after server-side ownership check. Events: `team_task_update`, `team_member_update`, `team_member_removed`, `team_message`, `team_deleted`.
+  - Frontend: `/teams` list page with create/delete and `/teams/:id` workspace (3-column Kanban: Members · Tasks · Mailbox). `useTeamSocket` hook bridges socket events to React state. Dashboard quick-actions widget surfaces the entry point.
+- ✅ **Infra — Alembic.** `alembic>=1.13.0` added to `backend/requirements.txt`. Migration scaffolding in `migrations/` with async env wired to project `DATABASE_URL`. Baseline revision `0001_baseline` uses idempotent `Base.metadata.create_all(checkfirst=True)` so existing prod databases can be stamped in place via `alembic stamp head`. `_run_migrations` retained for one release as a fallback.
+- ✅ ruff clean (0 errors after `--fix` cleared 8 stale `F841` `as exc` / `F401` unused-import findings inherited from the pre-audit code), TypeScript build clean, `pytest tests/test_improvements.py` → 66 passed, 3 integration skipped.
+
+### Project Creation Pipeline (2026-05-23)
 
 ### Project Creation Pipeline (2026-05-23)
 - ✅ **`projects` table** — new DB table (id, user_id, name, slug, desc, icon, created_at/updated_at) with unique (user_id, slug) index. `runs` table gains `project_id` FK + `selected_agents` column. Migration with FK constraint via DO block.

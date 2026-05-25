@@ -1,5 +1,5 @@
 # TaskMesh — Project State
-> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-23 (Project creation pipeline + UX fixes shipped).
+> Fast-recovery document. Update whenever work shifts. Last updated: 2026-05-24 (Agent Teams shipped + Launch/Billing-back bug root-causes + Alembic).
 > Full reference: `AGENT_CONTEXT.md`. Deep task list: `TODO.md`. Open items: `AUDIT_REMAINING.md`.
 
 ---
@@ -8,9 +8,35 @@
 Ship a working SaaS product: users sign up, pay via Paddle, and a team of AI agents builds
 software for them in real time — writing real files, visible in the browser as they work.
 
-**Active milestone:** Project creation pipeline complete. Users can create named projects
-with per-project agent selection, each isolated to `PROJECT_DIR/{slug}/`. Dashboard
-reflects real DB data. OAuth remember-me persists across browser restarts.
+**Active milestone:** Agent Teams feature live — users can spin up named teams of agents,
+manage members, run a Kanban-style shared task list with dependency tracking, and exchange
+inter-agent messages in real time. Project creation and the billing-page back button now
+have root-cause fixes. Alembic is the schema-migration tool of record going forward.
+
+**Recent changes (2026-05-24):**
+
+* **Bug fix — Launch Project.** `POST /api/projects` now returns HTTP 402 for
+  `no_subscription` / `no_credits` and HTTP 409 for `already_running` instead of
+  a 200 with an `error` field. The frontend `launchNew` handler reads
+  `r.ok` correctly. The order of operations was also flipped: billing is now
+  checked **before** the project row is created, so failed launches no longer
+  leave orphan rows in `projects`.
+* **Bug fix — Billing back-button.** The `BillingGate` wrapper was removed in
+  favor of plan-aware navigation at the login/register/oauth-callback level.
+  When the user has no plan, the routing code PUSHES `/billing` onto history
+  instead of REPLACING `/`, so browser back returns to `/login`. The OAuth
+  callback rewrites its own entry to `/login` via `window.history.replaceState`
+  before the push, achieving the same property for the OAuth path. `Dashboard`
+  retains a lightweight redirect for direct-URL access from a `none`-plan user.
+* **Feature — Agent Teams.** New first-class feature backed by
+  `backend/db/models_teams.py` (Team, TeamMember, TeamTask, TeamMessage),
+  `backend/core/team_orchestrator.py` (CRUD + claim/complete + LLM-driven
+  `execute_task`), `backend/api/teams.py` (REST surface), and Socket.IO rooms
+  `team:{id}` for real-time updates. Frontend: `/teams` list page and
+  `/teams/:id` workspace with three columns (Members / Kanban / Mailbox).
+* **Infra — Alembic.** Migrations live in `migrations/`. Baseline revision
+  `0001_baseline` is an idempotent `create_all` so existing prod can be stamped
+  in place. `_run_migrations` is kept for one release as a fallback.
 
 ---
 
@@ -86,7 +112,12 @@ MiniMaxClone/
 │   │   └── file_upload.py        file upload validation, storage, text preview
 │   └── db/
 │       ├── models.py             ORM: User, Run, RunFile, UserUsage, UserCredits, UserGitHub, ZenUsage
+│       ├── models_teams.py       ORM: Team, TeamMember, TeamTask, TeamMessage
 │       └── session.py            async session factory; no-op if DATABASE_URL unset
+│   ├── api/teams.py              REST surface for Agent Teams (CRUD + claim/complete + execute)
+│   └── core/team_orchestrator.py team coordinator: members, shared task list, mailbox
+│
+├── migrations/                   Alembic — migrations/versions/0001_baseline.py is the head
 │
 ├── frontend/src/
 │   ├── App.tsx                   routes, ProtectedRoute, BillingGate, MainApp

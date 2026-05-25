@@ -1,0 +1,40 @@
+TaskMesh — Alembic migrations
+=============================
+
+Single async-Postgres migration tree. Driven by DATABASE_URL from .env at
+the project root.
+
+Common commands
+---------------
+
+    # Show current schema head
+    alembic heads
+
+    # Apply all pending migrations
+    alembic upgrade head
+
+    # Generate a new revision from model diffs (autogenerate)
+    alembic revision --autogenerate -m "describe the change"
+
+    # Generate a blank revision (manual SQL)
+    alembic revision -m "describe the change"
+
+    # Stamp an existing production database at the current head WITHOUT
+    # running migrations. Use this once per environment that was previously
+    # provisioned by backend/db/session.py::_run_migrations so Alembic
+    # tracks its state going forward.
+    alembic stamp head
+
+Retiring _run_migrations
+------------------------
+
+The legacy `_run_migrations` function in backend/db/session.py is left in
+place for one release as a fallback. To retire it:
+
+1. Run `alembic stamp head` against every environment.
+2. Confirm `alembic_version.version_num = '0001_baseline'`.
+3. Delete the call to `_run_migrations` from `create_tables`.
+
+Until step 1 has been done on every environment, leave both paths active.
+The baseline migration is idempotent (`create_all(checkfirst=True)`) so
+running both is safe.

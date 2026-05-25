@@ -62,7 +62,9 @@ export default function RegisterPage() {
       }
       const success = await login()
       if (!success) { setError('Registration failed — could not verify session'); return }
-      navigate('/', { replace: true })
+      // New users always start at plan='none' — push /billing so browser back
+      // returns to /register, never to /.
+      navigate('/billing')
     } catch {
       setError('Network error — is the backend running?')
     } finally {

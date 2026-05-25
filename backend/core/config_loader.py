@@ -46,18 +46,33 @@ class ProjectConfig:
     provider: ProviderConfig = field(default_factory=ProviderConfig)
 
 
-def get_project_dir(slug: str | None = None) -> Path:
+def get_project_dir(slug: str | None = None, user_id: str | None = None) -> Path:
     """Return the active project directory.
 
-    If slug is provided, returns PROJECT_DIR/{slug}/ creating the folder if needed.
-    Otherwise returns the root PROJECT_DIR.
+    Layouts:
+      get_project_dir()                  -> PROJECT_DIR
+      get_project_dir(user_id=u)         -> PROJECT_DIR/{u}
+      get_project_dir(slug=s)            -> PROJECT_DIR/{s}           (legacy)
+      get_project_dir(slug=s, user_id=u) -> PROJECT_DIR/{u}/{s}       (recommended)
+
+    The slug-only layout is preserved so older callers continue to function
+    during the multi-tenant filesystem migration. New code should pass user_id
+    — two users with the same slug collide on the slug-only layout, which is
+    a cross-tenant data-leak risk on the filesystem layer.
     """
     env = os.environ.get("PROJECT_DIR")
     base = Path(env).resolve() if env else Path(os.getcwd())
+    if user_id:
+        # Sanitize: only allow filesystem-safe characters in the tenant key.
+        # user_id is a UUID in production but we defend in depth.
+        safe = "".join(c for c in user_id if c.isalnum() or c in "-_")
+        base = base / (safe or "anonymous")
     if slug:
         target = base / slug
         target.mkdir(parents=True, exist_ok=True)
         return target
+    if user_id:
+        base.mkdir(parents=True, exist_ok=True)
     return base
 
 

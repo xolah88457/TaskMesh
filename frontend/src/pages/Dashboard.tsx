@@ -131,9 +131,9 @@ function TasksWidget({ totalMessages }: { totalMessages: number }) {
 
 function QuickActionsWidget({ onAction, lastProjectName }: { onAction: (id: string) => void; lastProjectName?: string }) {
   const actions = [
-    { id: 'last', label: lastProjectName ? `Last: ${lastProjectName}` : 'Last Project', ic: '↗' },
-    { id: 'duplicate', label: 'Duplicate Last', ic: '⎘' },
-    { id: 'billing', label: 'Billing & Credits', ic: '💳' },
+    { id: 'last',     label: lastProjectName ? `Last: ${lastProjectName}` : 'Last Project', ic: '↗' },
+    { id: 'teams',    label: 'Agent teams',          ic: '⌬' },
+    { id: 'billing',  label: 'Billing & Credits',    ic: '💳' },
   ]
   return (
     <div className="widget">
@@ -487,7 +487,12 @@ export default function Dashboard() {
       .catch(() => setToast('Failed to load projects'))
     authFetch('/api/billing/usage')
       .then(r => r.json())
-      .then(setUsage)
+      .then((u: Usage) => {
+        setUsage(u)
+        // Hard-bounce direct-URL access if the user has no active plan.
+        // Use replace so this entry doesn't pollute history.
+        if (u.plan === 'none') navigate('/billing', { replace: true })
+      })
       .catch(() => {})
   }, [])  // load only on mount
 
@@ -523,20 +528,27 @@ export default function Dashboard() {
         }),
       })
 
-      d = await r.json()
+      d = await r.json().catch(() => ({}))
 
       if (!r.ok) {
-        if (d.error === 'no_subscription') {
+        // FastAPI puts the error code in `detail`. Older 200-with-error
+        // responses are still handled via `d.error` for back-compat.
+        const code = (typeof d.detail === 'string' ? d.detail : d.detail?.error) || d.error
+        if (code === 'no_subscription') {
           setToast('You need a subscription to start projects')
           navigate('/billing')
           return
         }
-        if (d.error === 'no_credits') {
+        if (code === 'no_credits') {
           setToast('No credits remaining. Top up?')
           navigate('/billing')
           return
         }
-        setToast(d.error || 'Failed to start project')
+        if (code === 'already_running') {
+          setToast('A run is already in progress. Stop it before launching another.')
+          return
+        }
+        setToast(code || 'Failed to start project')
         return
       }
     } catch {
@@ -544,17 +556,24 @@ export default function Dashboard() {
       return
     }
 
-
     if (d.run_id) {
       setActiveId(d.project_id)
       setToast(`launched ${cfg.name}`)
-      navigate(`/project/${d.run_id}`)
+      navigate(`/project/${d.run_id}`, {
+        state: {
+          projectId: d.project_id,
+          projectName: cfg.name,
+          projectDesc: cfg.desc,
+          projectAgents: cfg.agents,
+        },
+      })
     } else {
-      // No run started — navigate to workspace with project settings via state
+      // auto_start=false branch — project created, no run yet
       setActiveId(d.project_id)
-      setToast(`loading ${cfg.name}...`)
+      setToast(`created ${cfg.name}`)
       navigate(`/project/${d.project_id}`, {
         state: {
+          projectId: d.project_id,
           projectName: cfg.name,
           projectDesc: cfg.desc,
           projectAgents: cfg.agents,
@@ -629,22 +648,8 @@ export default function Dashboard() {
     if (id === 'last') {
       const last = projects[0]
       if (last) navigate(`/project/${last.id}`)
-    } else if (id === 'duplicate') {
-      const last = projects[0]
-      if (last) {
-        const dup: Project = {
-          ...last,
-          id: 'p_' + Math.random().toString(36).slice(2, 8),
-          name: last.name + '-copy',
-          status: 'ready',
-          progress: 0,
-          lastActive: 'just now',
-          lastActiveSort: 0,
-          created: 'just now',
-        }
-        setProjects([dup, ...projects])
-        setToast(`duplicated ${last.name}`)
-      }
+    } else if (id === 'teams') {
+      navigate('/teams')
     } else if (id === 'billing') {
       navigate('/billing')
     }

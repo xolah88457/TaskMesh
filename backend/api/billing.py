@@ -354,7 +354,7 @@ async def get_portal(user: dict = Depends(require_auth)):
             if portal_url:
                 return {"portal_url": portal_url}
             _log.error("Paddle portal response missing URL: %s", portal_data)
-        except Exception as exc:
+        except Exception:
             _log.exception("Paddle portal request failed")
 
     raise HTTPException(status_code=503, detail="Could not generate portal URL")

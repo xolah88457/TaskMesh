@@ -58,7 +58,27 @@ export default function LoginPage() {
       }
       const success = await login()
       if (!success) { setError('Login failed — could not verify session'); return }
-      navigate('/', { replace: true })
+
+      // Route based on plan. For users without an active subscription we
+      // PUSH /billing onto history (not replace) so the browser back button
+      // lands on /login, never on the dashboard. The plan check defaults to
+      // 'none' on network failure so we err on the side of routing through
+      // billing — fail-closed for the gating decision.
+      let plan = 'none'
+      try {
+        const usageResp = await fetch('/api/billing/usage', { credentials: 'include' })
+        if (usageResp.ok) {
+          const usage = await usageResp.json()
+          plan = usage.plan ?? 'none'
+        }
+      } catch {
+        // network error — keep plan='none', user gets routed to /billing
+      }
+      if (plan === 'none') {
+        navigate('/billing')                 // push: back → /login
+      } else {
+        navigate('/', { replace: true })     // replace: /login → /
+      }
     } catch {
       setError('Network error — is the backend running?')
     } finally {

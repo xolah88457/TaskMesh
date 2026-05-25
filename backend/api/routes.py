@@ -279,29 +279,66 @@ async def get_project(project_id: str, user: dict = Depends(require_auth)):
 
 @router.post("/projects")
 async def create_project(body: CreateProject, user: dict = Depends(require_auth)):
-    """Create a project and optionally start its first run."""
-    from ..db.models import Project, Run
+    """Create a project and optionally start its first run.
+
+    Returns HTTP 402 for billing failures (no_subscription / no_credits),
+    HTTP 409 if a run is already in flight for this user, HTTP 400 for
+    invalid input. On success returns the new project_id, slug, and run_id
+    (when auto_start was true).
+    """
+    from ..db.models import Project
     from ..db.session import get_session
     user_id = user.get("sub", "anonymous")
 
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=400, detail="invalid_name")
+
+    # 1. Reject duplicate runs upfront — a 409 is the right semantic here.
+    existing_orch = _orchestrators.get(user_id)
+    if existing_orch is not None and existing_orch.is_running():
+        raise HTTPException(status_code=409, detail="already_running")
+
+    # 2. Billing gate — refuse the request before doing any DB work so the
+    #    DB does not accumulate orphan project rows for users that hit the
+    #    paywall.
+    plan = "pro"
+    balance = 999999
+    agent_limit: int | None = None
+    if body.auto_start and not (_AUTH_DISABLED or user_id == "dev-user"):
+        from ..db.models import UserCredits
+        async with get_session() as session:
+            if session is not None:
+                creds = await session.get(UserCredits, user_id)
+                plan = creds.plan if creds else "none"
+                balance = creds.balance_cents if creds else 0
+            else:
+                plan = "none"
+                balance = 0
+        if plan == "none":
+            raise HTTPException(status_code=402, detail="no_subscription")
+        if balance <= 0:
+            raise HTTPException(status_code=402, detail="no_credits")
+        agent_limit = 3 if plan == "starter" else None
+
+    # 3. Create the project row with a unique slug.
     base_slug = _make_slug(body.name)
     slug = base_slug
     counter = 1
+    project_id = str(uuid.uuid4())
 
     async with get_session() as session:
         if session is None:
             raise HTTPException(status_code=503, detail="Database unavailable")
 
         while True:
-            existing = await session.execute(
+            existing_row = await session.execute(
                 select(Project).where(Project.user_id == user_id, Project.slug == slug)
             )
-            if existing.scalar_one_or_none() is None:
+            if existing_row.scalar_one_or_none() is None:
                 break
             counter += 1
             slug = f"{base_slug}-{counter}"
 
-        project_id = str(uuid.uuid4())
         project = Project(
             id=project_id,
             user_id=user_id,
@@ -313,41 +350,10 @@ async def create_project(body: CreateProject, user: dict = Depends(require_auth)
         session.add(project)
         await session.commit()
 
-    existing = _orchestrators.get(user_id)
-    if existing is not None and existing.is_running():
-        return {"error": "already_running", "status": "busy"}
-
-    run_id = None
-
+    # 4. Optionally start the first run.
+    run_id: str | None = None
     if body.auto_start:
-        plan, balance = "pro", 999999
-        agent_limit = None
-        if not (_AUTH_DISABLED or user_id == "dev-user"):
-            from ..db.session import get_session as gs
-            from ..db.models import UserCredits
-            async with gs() as sess:
-                if sess is not None:
-                    creds = await sess.get(UserCredits, user_id)
-                    plan = creds.plan if creds else "none"
-                    balance = creds.balance_cents if creds else 0
-            if plan == "none":
-                return {
-                    "project_id": project_id,
-                    "slug": slug,
-                    "run_id": None,
-                    "error": "no_subscription",
-                }
-            if balance <= 0:
-                return {
-                    "project_id": project_id,
-                    "slug": slug,
-                    "run_id": None,
-                    "error": "no_credits",
-                }
-            agent_limit = 3 if plan == "starter" else None
-
-        project_dir = get_project_dir(slug)
-
+        project_dir = get_project_dir(slug, user_id=user_id)
         run_id = str(uuid.uuid4())
         room = f"user:{user_id}"
         user_config = await _load_user_config(user_id, project_name=body.name)
@@ -378,18 +384,11 @@ async def create_project(body: CreateProject, user: dict = Depends(require_auth)
             )
         )
 
-        return {
-            "project_id": project_id,
-            "slug": slug,
-            "run_id": run_id,
-            "status": "started",
-        }
-
     return {
         "project_id": project_id,
         "slug": slug,
-        "run_id": None,
-        "status": "created",
+        "run_id": run_id,
+        "status": "started" if run_id else "created",
     }
 
 
@@ -417,7 +416,8 @@ async def upload_files(body: UploadRequest, user: dict = Depends(require_auth)):
         files_data.append((item.filename, content))
 
     upload_token = str(uuid.uuid4())
-    project_dir = get_project_dir()
+    # Per-tenant scoping — uploads live under PROJECT_DIR/{user_id}/uploads/{token}
+    project_dir = get_project_dir(user_id=user_id)
     upload_dir = project_dir / "uploads" / upload_token
 
     try:
@@ -524,8 +524,8 @@ async def start_project(body: ProjectBrief, user: dict = Depends(require_auth)):
     run_timeout = int(os.environ.get("RUN_TIMEOUT_SECONDS", "600"))
     orch._run_timeout_seconds = run_timeout
 
-    # Use project-specific directory
-    project_dir = get_project_dir(slug)
+    # Use project-specific directory, scoped per tenant.
+    project_dir = get_project_dir(slug, user_id=user_id)
     orch._cwd = project_dir
 
     asyncio.create_task(

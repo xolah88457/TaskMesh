@@ -3,7 +3,34 @@
 Open items from the **2026-05-22** full codebase audit (second pass) and items
 inherited from the 2026-05-21 audit. All items marked ✅ have been resolved.
 
-**Last updated:** 2026-05-22 (post 2nd-pass audit + Phase B health/observability).
+**Last updated:** 2026-05-24 (Multi-tenant hardening Phase 1 — filesystem scoping + pool tuning + GitHub App + Teams gate).
+
+---
+
+## Multi-tenant hardening — Phase 1 (2026-05-24, second pass)
+
+### Closed in this pass
+
+| # | Issue | Status |
+|---|------|--------|
+| 24 | Filesystem tenant collision (two users with same slug shared a directory) | **Closed.** `get_project_dir(slug, user_id)` now scopes to `PROJECT_DIR/{user_id}/{slug}`. Health probe and root callers retain the legacy zero-arg form. |
+| (new) | Agent Teams accessible to free / Starter users | **Closed.** `require_teams_access` enforces `plan == 'pro'` and `UserGitHubInstall.default_repo` on every `/api/teams*` route. Pack purchasers pass via the existing `_handle_transaction_completed` upsert. |
+| (new) | Long-lived OAuth `repo` token stored plaintext | **Mitigated.** New GitHub App flow stores only the public `installation_id`; access tokens are minted on demand and cached in process memory for 50 min. The legacy OAuth path is preserved for the one-shot `/api/github/push` PR endpoint. |
+| (new) | DB connection pool too small for multi-agent concurrency | **Closed.** `create_async_engine` now uses `pool_size=20`, `max_overflow=20`, `pool_recycle=1800`; all env-overridable. |
+
+### Still open (deferred from Phase 1)
+
+| # | Issue | Status | Suggested next step |
+|---|------|--------|---------------------|
+| 25 | Postgres Row-Level Security | Open | Migration 0003 adds RLS policies; `get_session(user_id=...)` sets `app.current_user_id`. Risk: every existing route needs the user_id passed through. |
+| 26 | `_orchestrators` dict is per-process | Open | Partial unique index `runs(user_id) WHERE status='running'`. |
+| 27 | Audit tables lack direct `user_id` | Open | Migration 0004 adds tenant_id; backfill from `runs.user_id` and `agent_teams.user_id`. |
+| 28 | `agent-team.config.json` holds an operator API key | Open | Move to a service-only path, drop the disk fallback once every user has a `users.config_json`. |
+| 29 | `TeamOrchestrator._inflight` in-process | Open | Same shape as #26; same fix. |
+| 30 | Append-only logs not partitioned | Open | Migration 0005 — monthly RANGE partition by `created_at`. |
+| 31 | Billing decrement + ZenUsage not transactional | Open | Wrap in a single `async with session.begin()` block; add `CHECK (balance_cents >= 0)`. |
+| (new) | `run_files.content` / `action_*` blobs still in PG | Open | Phase 2 will dual-write to GitHub via `GitHubSink`, then drop columns. |
+
 
 ---
 

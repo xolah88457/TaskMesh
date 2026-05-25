@@ -18,7 +18,18 @@ _AsyncSession = None
 
 if DATABASE_URL:
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-    _engine = create_async_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+    # Pool sizing tuned for multi-tenant load: each orchestrator run opens many
+    # short-lived sessions (task claim, file write, action_files, action_tools,
+    # zen_usage) concurrently across multiple agent loops. The defaults
+    # (pool_size=5, max_overflow=10) starve under ~5 concurrent users.
+    _engine = create_async_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "20")),
+        max_overflow=int(os.environ.get("DB_POOL_MAX_OVERFLOW", "20")),
+        pool_recycle=int(os.environ.get("DB_POOL_RECYCLE_SECONDS", "1800")),
+        echo=False,
+    )
     _AsyncSession = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
 
 _logger = logging.getLogger(__name__)
@@ -44,6 +55,9 @@ async def create_tables() -> None:
     if _engine is None:
         return
     from .models import Base
+    # Import side-effect: register Agent Teams tables on Base.metadata so they
+    # get picked up by create_all below.
+    from . import models_teams  # noqa: F401
     async with _engine.begin() as conn:
         try:
             await conn.run_sync(Base.metadata.create_all, checkfirst=True)

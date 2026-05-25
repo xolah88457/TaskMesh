@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import MatrixRain from './components/MatrixRain'
 import HealthBanner from './components/HealthBanner'
 import Header from './components/Header'
@@ -14,6 +14,8 @@ import AccountPage from './pages/AccountPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import AuthCallback from './pages/AuthCallback'
+import TeamsPage from './pages/TeamsPage'
+import TeamWorkspace from './pages/TeamWorkspace'
 import { useSocket } from './hooks/useSocket'
 import { useAuthContext } from './context/auth'
 import { useAuthFetch } from './hooks/useAuthFetch'
@@ -51,42 +53,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthContext()
   if (loading) return null
   if (!AUTH_DISABLED && !user) return <Navigate to="/login" replace />
-  return <>{children}</>
-}
-
-// ── Onboarding gate ────────────────────────────────────────────────────────────
-
-let _didBillingRedirect = false
-
-function BillingGate({ children }: { children: React.ReactNode }) {
-  const authFetch  = useAuthFetch()
-  const navigate   = useNavigate()
-  const { loading } = useAuthContext()
-  const navigationType = useNavigationType()
-  const [checked, setChecked] = useState(AUTH_DISABLED)
-
-  useEffect(() => {
-    if (AUTH_DISABLED || loading) return
-    authFetch('/api/billing/usage')
-      .then(r => r.json())
-      .then((data: { plan: string }) => {
-        if (data.plan === 'none') {
-          if (_didBillingRedirect && navigationType === 'POP') {
-            navigate('/login', { replace: true })
-          } else if (!_didBillingRedirect) {
-            _didBillingRedirect = true
-            navigate('/billing', { replace: true })
-          } else {
-            setChecked(true)
-          }
-        } else {
-          setChecked(true)
-        }
-      })
-      .catch(() => setChecked(true))
-  }, [authFetch, navigate, loading, navigationType])
-
-  if (!checked) return null   // brief flash while the check runs
   return <>{children}</>
 }
 
@@ -240,13 +206,13 @@ export default function App() {
 
       {/* Protected routes */}
       <Route path="/project/:id" element={<ProtectedRoute><Workspace /></ProtectedRoute>} />
+      <Route path="/teams"       element={<ProtectedRoute><TeamsPage /></ProtectedRoute>} />
+      <Route path="/teams/:id"   element={<ProtectedRoute><TeamWorkspace /></ProtectedRoute>} />
       <Route path="/billing"     element={<ProtectedRoute><BillingPage /></ProtectedRoute>} />
       <Route path="/settings"    element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
       <Route path="/"            element={
         <ProtectedRoute>
-          <BillingGate>
-            <Dashboard />
-          </BillingGate>
+          <Dashboard />
         </ProtectedRoute>
       } />
     </Routes>

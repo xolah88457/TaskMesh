@@ -234,7 +234,7 @@ async def _google_callback_impl(request: Request, code: str, state: str) -> Redi
                 },
                 timeout=15,
             )
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             _log.exception("Google token exchange: httpx error")
             raise HTTPException(status_code=502, detail="Failed to reach Google")
         if token_resp.status_code != 200:
@@ -253,7 +253,7 @@ async def _google_callback_impl(request: Request, code: str, state: str) -> Redi
                 headers={"Authorization": f"Bearer {access_token}"},
                 timeout=10,
             )
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             _log.exception("Google userinfo: httpx error")
             raise HTTPException(status_code=502, detail="Failed to reach Google")
         if userinfo_resp.status_code != 200:
@@ -378,7 +378,7 @@ async def _github_callback_impl(request: Request, code: str, state: str) -> Redi
                 headers={"Accept": "application/json"},
                 timeout=15,
             )
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             _log.exception("GitHub token exchange: httpx error")
             raise HTTPException(status_code=502, detail="Failed to reach GitHub")
         if token_resp.status_code != 200:
@@ -398,7 +398,7 @@ async def _github_callback_impl(request: Request, code: str, state: str) -> Redi
                 headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
                 timeout=10,
             )
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             _log.exception("GitHub user info: httpx error")
             raise HTTPException(status_code=502, detail="Failed to reach GitHub")
         if user_resp.status_code != 200:
@@ -479,7 +479,7 @@ async def exchange_token(request: Request):
 
     OAuth tokens always get a 7-day remember-me cookie.
     """
-    from ..auth.auth import decode_token, set_token_cookie, _TOKEN_DAYS
+    from ..auth.auth import decode_token, set_token_cookie
     try:
         body = await request.json()
     except Exception:

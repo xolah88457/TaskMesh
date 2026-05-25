@@ -115,13 +115,42 @@ class UserUsage(Base):
 
 
 class UserGitHub(Base):
-    """GitHub OAuth token per user."""
+    """GitHub OAuth token per user.
+
+    Legacy — populated by the OAuth App flow in backend/api/github.py. New
+    integrations prefer the GitHub App installation model (UserGitHubInstall)
+    so the platform never stores a long-lived plaintext token.
+    """
     __tablename__ = "user_github"
 
     user_id      = Column(String(128), primary_key=True)  # UUID from users table
     github_login = Column(String(128), nullable=False)
     access_token = Column(String(256), nullable=False)    # TODO: encrypt before prod
     connected_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class UserGitHubInstall(Base):
+    """GitHub App installation per user.
+
+    Replaces the long-lived OAuth access token with a short-lived installation
+    token minted on demand. We persist only the installation_id (a public
+    identifier) and the user's chosen default repository — never a bearer
+    token.
+    """
+    __tablename__ = "user_github_install"
+
+    user_id         = Column(String(128), primary_key=True)
+    installation_id = Column(String(64),  nullable=False)
+    github_login    = Column(String(128), nullable=True)        # account that installed
+    default_repo    = Column(String(256), nullable=True)        # "owner/name"
+    default_branch  = Column(String(128), nullable=False, default="main")
+    scopes          = Column(Text,        nullable=True)        # comma-separated, e.g. "contents:write,pull_requests:write"
+    installed_at    = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+    __table_args__ = (
+        Index("ix_user_github_install_installation", "installation_id"),
+    )
 
 
 class UserCredits(Base):

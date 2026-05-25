@@ -20,6 +20,7 @@ from .api.billing import router as billing_router  # noqa: E402
 from .api.github import router as github_router  # noqa: E402
 from .api.auth import router as auth_router  # noqa: E402
 from .api.account import router as account_router  # noqa: E402
+from .api.teams import router as teams_router, _bind_sio as _bind_teams_sio  # noqa: E402
 from .db.session import create_tables  # noqa: E402
 
 # Allowed origins for CORS / Socket.IO. Comma-separated env var, or "*" for dev.
@@ -32,6 +33,7 @@ _CORS_ORIGINS: list[str] | str = (
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=_CORS_ORIGINS)
 _init_sio(sio)
+_bind_teams_sio(sio)
 
 # Warn if CORS is wide open outside dev mode — production risk.
 if _cors_env == "*" and not AUTH_DISABLED:
@@ -74,6 +76,7 @@ app.include_router(billing_router, prefix="/api")
 app.include_router(github_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(account_router, prefix="/api")
+app.include_router(teams_router, prefix="/api")
 
 _default_config = get_default_config()
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
@@ -106,3 +109,53 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     print(f"Client disconnected: {sid}")
+
+
+# ── Agent Teams: per-team room subscription ──────────────────────────────────
+#
+# The client emits 'team_subscribe' with a team_id after navigating to a team
+# workspace. We verify the caller actually owns the team before joining the
+# team:<id> room — otherwise any logged-in user could listen in on another
+# user's team events.
+
+async def _sid_user_id(sid) -> str | None:
+    rooms = sio.rooms(sid)
+    for r in rooms:
+        if r.startswith("user:"):
+            return r[len("user:"):]
+    return None
+
+
+@sio.event
+async def team_subscribe(sid, data):
+    team_id = (data or {}).get("team_id", "")
+    if not team_id or not isinstance(team_id, str):
+        return {"status": "error", "code": "invalid_team_id"}
+    if AUTH_DISABLED:
+        sio.enter_room(sid, f"team:{team_id}")
+        return {"status": "ok"}
+    user_id = await _sid_user_id(sid)
+    if not user_id:
+        return {"status": "error", "code": "not_authenticated"}
+    # Verify ownership against the DB.
+    from sqlalchemy import select
+    from .db.session import get_session
+    from .db.models_teams import Team
+    async with get_session() as session:
+        if session is None:
+            return {"status": "error", "code": "db_unavailable"}
+        row = (await session.execute(
+            select(Team.id).where(Team.id == team_id, Team.user_id == user_id)
+        )).scalar_one_or_none()
+        if row is None:
+            return {"status": "error", "code": "not_found"}
+    sio.enter_room(sid, f"team:{team_id}")
+    return {"status": "ok"}
+
+
+@sio.event
+async def team_unsubscribe(sid, data):
+    team_id = (data or {}).get("team_id", "")
+    if team_id and isinstance(team_id, str):
+        sio.leave_room(sid, f"team:{team_id}")
+    return {"status": "ok"}

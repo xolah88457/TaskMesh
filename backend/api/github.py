@@ -39,10 +39,12 @@ _log = logging.getLogger(__name__)
 GITHUB_CLIENT_ID     = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
 GITHUB_REDIRECT_URI  = os.environ.get("GITHUB_REDIRECT_URI", "")
+GITHUB_APP_SLUG      = os.environ.get("GITHUB_APP_SLUG", "")  # e.g. "taskmesh"
 FRONTEND_URL         = os.environ.get("FRONTEND_URL", "")
 SECRET_KEY           = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 # Note: GITHUB_CLIENT_ID/SECRET here are for code-push OAuth.
 # Login OAuth uses GITHUB_AUTH_CLIENT_ID/SECRET in backend/api/auth.py.
+# GitHub App credentials live in backend/core/github_sink.py (GITHUB_APP_ID + key).
 
 
 def _get_base_url(request: Request) -> str:
@@ -144,7 +146,7 @@ async def github_callback(code: str, state: str, request: Request):
                 headers={"Accept": "application/json"},
                 timeout=15,
             )
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
             _log.exception("GitHub code-push token exchange: httpx error")
             raise HTTPException(status_code=502, detail="Failed to reach GitHub")
         if resp.status_code != 200:
@@ -170,7 +172,7 @@ async def github_callback(code: str, state: str, request: Request):
                 _log.error("GitHub code-push user info failed (status %s): %s", me.status_code, me.text)
                 raise HTTPException(status_code=502, detail="Failed to get user info from GitHub")
             github_user = me.json().get("login", "")
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         _log.exception("GitHub code-push user info: httpx error")
         raise HTTPException(status_code=502, detail="Failed to reach GitHub")
 
@@ -208,6 +210,188 @@ async def github_status(user: dict = Depends(require_auth)):
         if row is None:
             return {"connected": False}
         return {"connected": True, "github_login": row.github_login}
+
+
+# ── GitHub App installation flow ─────────────────────────────────────────────
+#
+# Newer, preferred flow. The user installs the TaskMesh GitHub App on their
+# account / org and selects which repos to grant. We never persist a long-
+# lived bearer token; installation access tokens are minted on demand via
+# core/github_sink.py.
+
+class _InstallRepoBody(BaseModel):
+    default_repo:   str
+    default_branch: str = "main"
+
+
+@router.get("/install/url")
+async def github_install_url(user: dict = Depends(require_auth)):
+    """Return the GitHub install URL for the TaskMesh App."""
+    if not GITHUB_APP_SLUG:
+        raise HTTPException(status_code=503, detail="github_app_unconfigured")
+    user_id = user.get("sub", "")
+    state   = _sign_state(user_id)
+    url = (
+        f"https://github.com/apps/{GITHUB_APP_SLUG}/installations/new"
+        f"?state={state}"
+    )
+    return {"install_url": url}
+
+
+@router.get("/install/callback")
+async def github_install_callback(
+    installation_id: str,
+    state: str = "",
+    setup_action: str = "install",
+    request: Request | None = None,
+):
+    """GitHub App post-install redirect. Persists the installation_id."""
+    user_id = _verify_state(state) if state else ""
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing_state")
+    if setup_action not in ("install", "update"):
+        # 'request' or other states — ignore silently and bounce home.
+        return RedirectResponse(f"{_frontend_redirect_url(request)}/?github=skipped")
+
+    # Fetch the installation to learn the github_login of the account
+    from ..core.github_sink import _make_app_jwt, is_app_configured
+    github_login = ""
+    if is_app_configured():
+        try:
+            app_jwt = _make_app_jwt()
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"https://api.github.com/app/installations/{installation_id}",
+                    headers={
+                        "Authorization": f"Bearer {app_jwt}",
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": "2022-11-28",
+                    },
+                )
+            if resp.status_code == 200:
+                github_login = resp.json().get("account", {}).get("login", "")
+        except Exception:
+            _log.exception("github install callback: failed to read installation")
+
+    from ..db.session import get_session
+    from ..db.models import UserGitHubInstall
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="db_unavailable")
+        row = await session.get(UserGitHubInstall, user_id)
+        if row is None:
+            session.add(UserGitHubInstall(
+                user_id=user_id,
+                installation_id=installation_id,
+                github_login=github_login or None,
+                scopes="contents:write,pull_requests:write",
+                installed_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            ))
+        else:
+            row.installation_id = installation_id
+            if github_login:
+                row.github_login = github_login
+            row.updated_at = datetime.now(timezone.utc)
+    return RedirectResponse(f"{_frontend_redirect_url(request)}/teams?github=installed")
+
+
+@router.get("/install/status")
+async def github_install_status(user: dict = Depends(require_auth)):
+    """Return current install state for the authenticated user."""
+    from ..db.session import get_session
+    from ..db.models import UserGitHubInstall
+    user_id = user.get("sub", "")
+    async with get_session() as session:
+        if session is None:
+            return {"installed": False}
+        row = await session.get(UserGitHubInstall, user_id)
+        if row is None:
+            return {"installed": False}
+        return {
+            "installed":      True,
+            "installation_id": row.installation_id,
+            "github_login":   row.github_login,
+            "default_repo":   row.default_repo,
+            "default_branch": row.default_branch,
+        }
+
+
+@router.put("/install/repo")
+async def github_install_set_repo(body: _InstallRepoBody, user: dict = Depends(require_auth)):
+    """Set the user's default repo + branch for Agent Teams output."""
+    if "/" not in body.default_repo or not body.default_repo.strip("/"):
+        raise HTTPException(status_code=400, detail="invalid_repo")
+    from ..db.session import get_session
+    from ..db.models import UserGitHubInstall
+    user_id = user.get("sub", "")
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="db_unavailable")
+        row = await session.get(UserGitHubInstall, user_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="not_installed")
+        row.default_repo   = body.default_repo.strip()
+        row.default_branch = (body.default_branch or "main").strip()
+        row.updated_at     = datetime.now(timezone.utc)
+    return {
+        "default_repo":   row.default_repo,
+        "default_branch": row.default_branch,
+    }
+
+
+@router.delete("/install")
+async def github_install_uninstall(user: dict = Depends(require_auth)):
+    """Remove the install row. Does NOT call GitHub — the user uninstalls there separately."""
+    from ..db.session import get_session
+    from ..db.models import UserGitHubInstall
+    user_id = user.get("sub", "")
+    async with get_session() as session:
+        if session is not None:
+            row = await session.get(UserGitHubInstall, user_id)
+            if row:
+                await session.delete(row)
+    return {"status": "uninstalled"}
+
+
+@router.get("/install/repos")
+async def github_install_list_repos(user: dict = Depends(require_auth)):
+    """List repos the installation has access to. Used by the repo-picker UI."""
+    from ..db.session import get_session
+    from ..db.models import UserGitHubInstall
+    from ..core.github_sink import _installation_token, GitHubSinkError
+    user_id = user.get("sub", "")
+    async with get_session() as session:
+        if session is None:
+            raise HTTPException(status_code=503, detail="db_unavailable")
+        row = await session.get(UserGitHubInstall, user_id)
+    if row is None:
+        raise HTTPException(status_code=400, detail="not_installed")
+    try:
+        token = await _installation_token(row.installation_id)
+    except GitHubSinkError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.code)
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            "https://api.github.com/installation/repositories?per_page=100",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="github_list_failed")
+    data = resp.json()
+    repos = [
+        {
+            "full_name":     r.get("full_name", ""),
+            "default_branch": r.get("default_branch", "main"),
+            "private":       bool(r.get("private", False)),
+        }
+        for r in data.get("repositories", [])
+    ]
+    return {"repositories": repos}
 
 
 @router.delete("/disconnect")
